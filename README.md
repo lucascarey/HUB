@@ -39,3 +39,9 @@ Abrí http://localhost:3000. Sin configurar nada, todo se guarda en ese navegado
 | `supabase/migrations` | Tablas y permisos de la base |
 
 Stack: Next.js, React, Supabase. Pensado para deployar en Vercel e instalar en el celu como app (PWA).
+
+## Bandeja de Gmail
+
+El recuadro "Bandeja" muestra los mails importantes sin leer (`is:unread is:important in:inbox`) y se actualiza cada 5 minutos. Solo lectura.
+
+Necesita en Vercel: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (cliente OAuth web de Google Cloud con la Gmail API activada y `https://<tu-app>/api/gmail/callback` como URI de redirección), `HUB_STATE_SECRET` y `HUB_DB_SECRET` (cadenas aleatorias). El hash de `HUB_DB_SECRET` se registra una vez en Supabase (ver `supabase/migrations/0002_gmail.sql`).

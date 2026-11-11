@@ -7,12 +7,14 @@ import { TYPES, TYPE_ORDER, type HubData, type Item, type ItemType } from "@/lib
 import AddPanel from "./AddPanel";
 import DetailPanel from "./DetailPanel";
 import Header from "./Header";
+import MailBox from "./MailBox";
+import { newId } from "@/lib/types";
 import type { Account } from "@/lib/useHub";
 import type { SyncStatus } from "@/lib/store";
 
 type View = { x: number; y: number; k: number };
 type Drag = {
-  sx: number; sy: number; moved: boolean; id: string | null; core: boolean;
+  sx: number; sy: number; moved: boolean; id: string | null; core: boolean; widget?: boolean;
   ox: number; oy: number; vx: number; vy: number;
 };
 
@@ -45,6 +47,15 @@ export default function Network(props: NetworkProps) {
   const [hint, setHint] = useState(true);
   const [enterKey, setEnterKey] = useState(0);
   const [born, setBorn] = useState<string | null>(null);
+  const MAIL_KEY = "hub-mailbox-pos";
+  const [mailPos, setMailPos] = useState<{ x: number; y: number }>(() => {
+    try {
+      const p = JSON.parse(localStorage.getItem(MAIL_KEY) ?? "null");
+      if (p && typeof p.x === "number") return p;
+    } catch {}
+    return { x: 0, y: 0 };
+  });
+  const [mailDragging, setMailDragging] = useState(false);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -193,6 +204,9 @@ export default function Network(props: NetworkProps) {
 
   const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
     if (e.button > 0) return;
+    const target = e.target as HTMLElement;
+    // Links and buttons inside the mail box work as normal controls.
+    if (target.closest("[data-widget] a, [data-widget] button")) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (ptrs.current.size === 2) {
@@ -201,7 +215,12 @@ export default function Network(props: NetworkProps) {
       drag.current = null;
       return;
     }
-    const ne = (e.target as HTMLElement).closest<HTMLElement>("[data-id]");
+    if (target.closest("[data-widget]")) {
+      drag.current = { sx: e.clientX, sy: e.clientY, moved: false, id: null, core: false, widget: true,
+        ox: mailPos.x, oy: mailPos.y, vx: view.current.x, vy: view.current.y };
+      return;
+    }
+    const ne = target.closest<HTMLElement>("[data-id]");
     const id = ne?.dataset.id ?? null;
     const core = ne?.dataset.core === "1";
     const it = id && !core ? byId.get(id) : undefined;
@@ -226,11 +245,14 @@ export default function Network(props: NetworkProps) {
     if (!d.moved && Math.hypot(dx, dy) > 4) {
       d.moved = true;
       setHint(false);
-      if (d.id && !d.core) setDragging(d.id);
+      if (d.widget) setMailDragging(true);
+      else if (d.id && !d.core) setDragging(d.id);
       else setPanning(true);
     }
     if (!d.moved) return;
-    if (d.id && !d.core) {
+    if (d.widget) {
+      setMailPos({ x: Math.round(d.ox + dx / view.current.k), y: Math.round(d.oy + dy / view.current.k) });
+    } else if (d.id && !d.core) {
       const x = Math.round(d.ox + dx / view.current.k), y = Math.round(d.oy + dy / view.current.k);
       const id = d.id;
       update((h) => ({ ...h, items: h.items.map((i) => (i.id === id ? { ...i, x, y } : i)) }));
@@ -252,6 +274,14 @@ export default function Network(props: NetworkProps) {
     drag.current = null;
     setPanning(false);
     setDragging(null);
+    if (d?.widget) {
+      setMailDragging(false);
+      if (d.moved) setMailPos((p) => {
+        try { localStorage.setItem(MAIL_KEY, JSON.stringify(p)); } catch {}
+        return p;
+      });
+      return;
+    }
     if (!d || d.moved) return;
     if (!d.id) {
       setSelected(null);
@@ -369,6 +399,22 @@ export default function Network(props: NetworkProps) {
               </g>
             ))}
           </svg>
+          {!space && props.account && (
+            <MailBox
+              x={mailPos.x}
+              y={mailPos.y}
+              dragging={mailDragging}
+              onToTask={(title) => {
+                const a = Math.random() * Math.PI * 2;
+                const item: Item = {
+                  id: newId(), type: "tarea", title, parentId: null, date: "", done: false, area: "",
+                  x: Math.round(mailPos.x + Math.cos(a) * 320), y: Math.round(mailPos.y + Math.sin(a) * 260),
+                };
+                update((d) => ({ ...d, items: [...d.items, item] }));
+                onAdded(item);
+              }}
+            />
+          )}
           {project && renderNode(project, true)}
           {visible.map((i) => renderNode(i))}
         </div>
