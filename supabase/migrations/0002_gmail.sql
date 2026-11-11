@@ -49,6 +49,9 @@ revoke all on function public.hub_gmail_disconnect() from public;
 grant execute on function public.hub_save_gmail_token(uuid, text, text, text) to anon, authenticated;
 grant execute on function public.hub_gmail_token() to authenticated;
 grant execute on function public.hub_gmail_disconnect() to authenticated;
+-- Supabase grants new functions to anon by default; these two only make sense signed in.
+revoke execute on function public.hub_gmail_token() from anon;
+revoke execute on function public.hub_gmail_disconnect() from anon;
 
 -- After applying, register the secret once (not stored in the repo):
 --   insert into public.app_secrets (name, hash) values ('gmail_store', extensions.digest('<HUB_DB_SECRET>', 'sha256'));
