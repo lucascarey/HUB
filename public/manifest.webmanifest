@@ -1,0 +1,10 @@
+{
+  "name": "HUB",
+  "short_name": "HUB",
+  "description": "Tu cabeza en un solo lugar.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#06070a",
+  "theme_color": "#06070a",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
