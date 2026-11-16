@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "HUB",
+  "short_name": "HUB",
+  "description": "Tu cabeza en un solo lugar: proyectos, tareas, ideas, plata, hábitos y gym.",
+  "lang": "es-AR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#06070a",
+  "theme_color": "#06070a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Cargar peso", "short_name": "Gym", "url": "/?gym=1", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
