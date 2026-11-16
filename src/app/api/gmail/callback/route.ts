@@ -16,6 +16,10 @@ export async function GET(req: Request) {
     return back("ok");
   } catch (e) {
     console.error("gmail callback", e);
+    const msg = String(e);
+    // Gmail API switched off in the Google Cloud project, or the read permission box left unticked.
+    if (/SERVICE_DISABLED|accessNotConfigured|has not been used/.test(msg)) return back("api_off");
+    if (/insufficient|PERMISSION_DENIED|ACCESS_TOKEN_SCOPE/i.test(msg)) return back("scope");
     return back("error");
   }
 }

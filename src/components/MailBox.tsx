@@ -53,7 +53,13 @@ export default function MailBox({ x, y, dragging, onToTask }: Props) {
     const p = new URLSearchParams(window.location.search);
     const g = p.get("gmail");
     if (g) {
-      setNotice(g === "ok" ? "Gmail conectado." : g === "denied" ? "No diste permiso a Gmail." : "No se pudo conectar Gmail. Probá de nuevo.");
+      setNotice(
+        g === "ok" ? "Gmail conectado."
+        : g === "denied" ? "No diste permiso a Gmail."
+        : g === "api_off" ? "Falta activar la Gmail API en Google Cloud (proyecto HUBgmail). Activala y probá de nuevo."
+        : g === "scope" ? "Google no dio permiso de lectura. Al conectar, tildá la casilla “Ver tus mensajes de correo”."
+        : "No se pudo conectar Gmail. Probá de nuevo.",
+      );
       window.history.replaceState(null, "", window.location.pathname);
     }
     void load();

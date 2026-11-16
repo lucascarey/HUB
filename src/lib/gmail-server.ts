@@ -95,7 +95,7 @@ export async function gmail<T>(access: string, path: string): Promise<T> {
     headers: { authorization: `Bearer ${access}` },
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`Gmail ${res.status}`);
+  if (!res.ok) throw new Error(`Gmail ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}`);
   return res.json() as Promise<T>;
 }
 
