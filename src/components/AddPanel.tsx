@@ -50,6 +50,7 @@ export default function AddPanel({ data, update, space, visible, view, onClose, 
     }
     const item: Item = { id: newId(), type, title, parentId, date, x: Math.round(x), y: Math.round(y), done: false, area: "" };
     update((d) => ({
+      ...d,
       items: [...d.items, item],
       links: target && parentId === space ? [...d.links, { id: newId(), a: item.id, b: target.id }] : d.links,
     }));

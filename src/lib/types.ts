@@ -33,9 +33,21 @@ export interface Link {
   b: string;
 }
 
+/** One logged gym set: exercise, weight and reps on a day. */
+export interface GymLog {
+  id: string;
+  exercise: string;
+  kg: number;
+  reps: number;
+  sets: number;
+  /** YYYY-MM-DD */
+  date: string;
+}
+
 export interface HubData {
   items: Item[];
   links: Link[];
+  gym: GymLog[];
 }
 
 export const newId = () =>

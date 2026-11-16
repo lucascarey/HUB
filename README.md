@@ -45,3 +45,9 @@ Stack: Next.js, React, Supabase. Pensado para deployar en Vercel e instalar en e
 El recuadro "Bandeja" muestra los mails importantes sin leer (`is:unread is:important in:inbox`) y se actualiza cada 5 minutos. Solo lectura.
 
 Necesita en Vercel: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (cliente OAuth web de Google Cloud con la Gmail API activada y `https://<tu-app>/api/gmail/callback` como URI de redirección), `HUB_STATE_SECRET` y `HUB_DB_SECRET` (cadenas aleatorias). El hash de `HUB_DB_SECRET` se registra una vez en Supabase (ver `supabase/migrations/0002_gmail.sql`).
+
+## App en el celu, gym y modo claro
+
+- **Instalable (PWA):** `public/manifest.webmanifest`, íconos PNG y `public/sw.js` (abre sin señal con la última versión). En Android: menú ⋮ → "Instalar app". En iPhone: Safari → Compartir → "Agregar a inicio". El atajo "Cargar peso" abre directo el gym (`/?gym=1`).
+- **Gym:** recuadro "Gym" en el espacio principal y botón Gym arriba. Cada serie se guarda en `gym_logs` (`supabase/migrations/0003_gym.sql`).
+- **Modo claro:** botón ☀/☾ arriba. Arranca según el modo del teléfono y recuerda lo que elegís en cada dispositivo.

@@ -36,6 +36,7 @@ export default function DetailPanel({ item, data, update, space, onClose, onEnte
     }
     const gone = new Set([item.id, ...data.items.filter((c) => c.parentId === item.id).map((c) => c.id)]);
     update((d) => ({
+      ...d,
       items: d.items.filter((i) => !gone.has(i.id)),
       links: d.links.filter((l) => !gone.has(l.a) && !gone.has(l.b)),
     }));

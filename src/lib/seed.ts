@@ -35,5 +35,5 @@ export function makeSeed(): HubData {
     ["t1", "e1"], ["m2", "i1"], ["h1", "p3"], ["p2", "h1"], ["m1", "p1"], ["i1", "p2"], ["e1", "p2"],
     ["c1", "c3"], ["c2", "c3"], ["c4", "c2"], ["c5", "c8"], ["c6", "c7"], ["c9", "c10"], ["c10", "c11"],
   ];
-  return { items, links: pairs.map(([a, b]) => ({ id: newId(), a: id(a), b: id(b) })) };
+  return { items, links: pairs.map(([a, b]) => ({ id: newId(), a: id(a), b: id(b) })), gym: [] };
 }

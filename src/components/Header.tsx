@@ -5,12 +5,15 @@ import type { FormEvent } from "react";
 import type { SyncStatus } from "@/lib/store";
 import type { Item } from "@/lib/types";
 import type { Account } from "@/lib/useHub";
+import { useInstall } from "@/lib/install";
+import { useTheme } from "@/lib/theme";
 
 interface Props {
   project?: Item;
   onHome: () => void;
   tomorrowCount: number;
   onTomorrow: () => void;
+  onGym: () => void;
   account: Account | null;
   status: SyncStatus;
   cloudEnabled: boolean;
@@ -31,6 +34,8 @@ export default function Header(p: Props) {
   const [email, setEmail] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [resetArmed, setResetArmed] = useState(false);
+  const { theme, toggle } = useTheme();
+  const inst = useInstall();
 
   useEffect(() => {
     if (!resetArmed) return;
@@ -61,6 +66,19 @@ export default function Header(p: Props) {
         <span className="dot" />
         {p.tomorrowCount ? `Mañana: ${p.tomorrowCount} ${p.tomorrowCount === 1 ? "cosa" : "cosas"}` : "Nada para mañana"}
       </button>
+      <button className="pill gym-pill" type="button" onClick={p.onGym}>
+        <span className="dot" style={{ background: "var(--c-gym)", boxShadow: "0 0 10px var(--c-gym)" }} />
+        Gym
+      </button>
+      <button
+        className="pill icon-pill"
+        type="button"
+        onClick={toggle}
+        aria-label={theme === "light" ? "Pasar a modo oscuro" : "Pasar a modo claro"}
+        title={theme === "light" ? "Modo oscuro" : "Modo claro"}
+      >
+        {theme === "light" ? "☾" : "☀"}
+      </button>
       <div className="menuWrap">
         <button className="pill" type="button" aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
           <span className={`sync ${p.status}`} />
@@ -83,6 +101,19 @@ export default function Header(p: Props) {
               </form>
             ) : (
               <p className="note">Por ahora todo se guarda en este navegador. Cuando conectemos Supabase vas a poder sincronizar tus dispositivos.</p>
+            )}
+            {!inst.installed && (
+              <div className="col install">
+                {inst.canPrompt ? (
+                  <button className="btn" type="button" onClick={() => void inst.install()}>Instalar el HUB en este dispositivo</button>
+                ) : (
+                  <p className="note">
+                    {inst.ios
+                      ? "Para tenerlo como app: en Safari tocá Compartir y después “Agregar a inicio”."
+                      : "Para tenerlo como app: abrí el menú del navegador (⋮) y tocá “Instalar app” o “Agregar a pantalla de inicio”."}
+                  </p>
+                )}
+              </div>
             )}
             <button
               className="btn warn"

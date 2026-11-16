@@ -7,14 +7,27 @@ import { TYPES, TYPE_ORDER, type HubData, type Item, type ItemType } from "@/lib
 import AddPanel from "./AddPanel";
 import DetailPanel from "./DetailPanel";
 import Header from "./Header";
+import GymBox from "./GymBox";
+import GymPanel from "./GymPanel";
 import MailBox from "./MailBox";
 import { newId } from "@/lib/types";
 import type { Account } from "@/lib/useHub";
 import type { SyncStatus } from "@/lib/store";
 
 type View = { x: number; y: number; k: number };
+type Widget = "mail" | "gym";
+type Pt = { x: number; y: number };
+const WIDGET_DEFAULT: Record<Widget, Pt> = { mail: { x: 0, y: 0 }, gym: { x: 0, y: 560 } };
+const widgetKey = (w: Widget) => (w === "mail" ? "hub-mailbox-pos" : "hub-gymbox-pos");
+function readPos(w: Widget): Pt {
+  try {
+    const p = JSON.parse(localStorage.getItem(widgetKey(w)) ?? "null");
+    if (p && typeof p.x === "number" && typeof p.y === "number") return p;
+  } catch {}
+  return WIDGET_DEFAULT[w];
+}
 type Drag = {
-  sx: number; sy: number; moved: boolean; id: string | null; core: boolean; widget?: boolean;
+  sx: number; sy: number; moved: boolean; id: string | null; core: boolean; widget?: Widget;
   ox: number; oy: number; vx: number; vy: number;
 };
 
@@ -47,15 +60,10 @@ export default function Network(props: NetworkProps) {
   const [hint, setHint] = useState(true);
   const [enterKey, setEnterKey] = useState(0);
   const [born, setBorn] = useState<string | null>(null);
-  const MAIL_KEY = "hub-mailbox-pos";
-  const [mailPos, setMailPos] = useState<{ x: number; y: number }>(() => {
-    try {
-      const p = JSON.parse(localStorage.getItem(MAIL_KEY) ?? "null");
-      if (p && typeof p.x === "number") return p;
-    } catch {}
-    return { x: 0, y: 0 };
-  });
-  const [mailDragging, setMailDragging] = useState(false);
+  const [wpos, setWpos] = useState<Record<Widget, Pt>>(() => ({ mail: readPos("mail"), gym: readPos("gym") }));
+  const [widgetDragging, setWidgetDragging] = useState<Widget | null>(null);
+  const [gymOpen, setGymOpen] = useState(false);
+  const mailPos = wpos.mail;
 
   const stageRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -71,6 +79,16 @@ export default function Network(props: NetworkProps) {
     (i: Item) => !!i.date && i.date <= today && !i.done && i.type !== "proyecto" && i.type !== "habito",
     [today],
   );
+
+  // Opened from the "Cargar peso" shortcut on the phone's home screen.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("gym") !== "1") return;
+    setGymOpen(true);
+    p.delete("gym");
+    const q = p.toString();
+    window.history.replaceState(null, "", window.location.pathname + (q ? `?${q}` : ""));
+  }, []);
 
   // A project that was deleted while we were inside it: go back to the main space.
   useEffect(() => {
@@ -97,6 +115,7 @@ export default function Network(props: NetworkProps) {
     (sp: string | null): View => {
       const pts = data.items.filter((i) => i.parentId === sp).map((i) => ({ x: i.x, y: i.y }));
       if (sp || !pts.length) pts.push({ x: 0, y: 0 });
+      if (!sp) pts.push(wpos.gym);
       const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
       const x0 = Math.min(...xs) - 130, x1 = Math.max(...xs) + 130;
       const y0 = Math.min(...ys) - 70, y1 = Math.max(...ys) + 70;
@@ -105,6 +124,7 @@ export default function Network(props: NetworkProps) {
       const k = clampK(Math.max(w < 640 ? 0.55 : 0, Math.min(1, (w - 40) / (x1 - x0), (h - 170) / (y1 - y0))));
       return { k, x: w / 2 - ((x0 + x1) / 2) * k, y: (h + 20) / 2 - ((y0 + y1) / 2) * k };
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [data.items],
   );
 
@@ -186,13 +206,14 @@ export default function Network(props: NetworkProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (addOpen) setAddOpen(false);
+      if (gymOpen) setGymOpen(false);
+      else if (addOpen) setAddOpen(false);
       else if (selected) setSelected(null);
       else if (space) go(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [addOpen, selected, space, go]);
+  }, [gymOpen, addOpen, selected, space, go]);
 
   /* ---------- pointer: pan, drag, pinch, tap ---------- */
   const ptrs = useRef(new Map<number, { x: number; y: number }>());
@@ -215,9 +236,11 @@ export default function Network(props: NetworkProps) {
       drag.current = null;
       return;
     }
-    if (target.closest("[data-widget]")) {
-      drag.current = { sx: e.clientX, sy: e.clientY, moved: false, id: null, core: false, widget: true,
-        ox: mailPos.x, oy: mailPos.y, vx: view.current.x, vy: view.current.y };
+    const wEl = target.closest<HTMLElement>("[data-widget]");
+    if (wEl) {
+      const w = wEl.dataset.widget as Widget;
+      drag.current = { sx: e.clientX, sy: e.clientY, moved: false, id: null, core: false, widget: w,
+        ox: wpos[w].x, oy: wpos[w].y, vx: view.current.x, vy: view.current.y };
       return;
     }
     const ne = target.closest<HTMLElement>("[data-id]");
@@ -245,13 +268,14 @@ export default function Network(props: NetworkProps) {
     if (!d.moved && Math.hypot(dx, dy) > 4) {
       d.moved = true;
       setHint(false);
-      if (d.widget) setMailDragging(true);
+      if (d.widget) setWidgetDragging(d.widget);
       else if (d.id && !d.core) setDragging(d.id);
       else setPanning(true);
     }
     if (!d.moved) return;
     if (d.widget) {
-      setMailPos({ x: Math.round(d.ox + dx / view.current.k), y: Math.round(d.oy + dy / view.current.k) });
+      const w = d.widget;
+      setWpos((p) => ({ ...p, [w]: { x: Math.round(d.ox + dx / view.current.k), y: Math.round(d.oy + dy / view.current.k) } }));
     } else if (d.id && !d.core) {
       const x = Math.round(d.ox + dx / view.current.k), y = Math.round(d.oy + dy / view.current.k);
       const id = d.id;
@@ -275,11 +299,18 @@ export default function Network(props: NetworkProps) {
     setPanning(false);
     setDragging(null);
     if (d?.widget) {
-      setMailDragging(false);
-      if (d.moved) setMailPos((p) => {
-        try { localStorage.setItem(MAIL_KEY, JSON.stringify(p)); } catch {}
-        return p;
-      });
+      const w = d.widget;
+      setWidgetDragging(null);
+      if (d.moved) {
+        setWpos((p) => {
+          try { localStorage.setItem(widgetKey(w), JSON.stringify(p[w])); } catch {}
+          return p;
+        });
+      } else if (w === "gym") {
+        setSelected(null);
+        setAddOpen(false);
+        setGymOpen(true);
+      }
       return;
     }
     if (!d || d.moved) return;
@@ -297,6 +328,7 @@ export default function Network(props: NetworkProps) {
     }
     lastTap.current = { id: d.id, t: now };
     setAddOpen(false);
+    setGymOpen(false);
     setSelected(d.id);
   };
 
@@ -403,7 +435,7 @@ export default function Network(props: NetworkProps) {
             <MailBox
               x={mailPos.x}
               y={mailPos.y}
-              dragging={mailDragging}
+              dragging={widgetDragging === "mail"}
               onToTask={(title) => {
                 const a = Math.random() * Math.PI * 2;
                 const item: Item = {
@@ -415,6 +447,7 @@ export default function Network(props: NetworkProps) {
               }}
             />
           )}
+          {!space && <GymBox x={wpos.gym.x} y={wpos.gym.y} dragging={widgetDragging === "gym"} gym={data.gym} />}
           {project && renderNode(project, true)}
           {visible.map((i) => renderNode(i))}
         </div>
@@ -425,6 +458,11 @@ export default function Network(props: NetworkProps) {
         onHome={() => go(null)}
         tomorrowCount={tomorrowItems.length}
         onTomorrow={nextTomorrow}
+        onGym={() => {
+          setSelected(null);
+          setAddOpen(false);
+          setGymOpen((o) => !o);
+        }}
         account={props.account}
         status={props.status}
         cloudEnabled={props.cloudEnabled}
@@ -469,6 +507,7 @@ export default function Network(props: NetworkProps) {
         aria-label="Agregar algo"
         onClick={() => {
           setSelected(null);
+          setGymOpen(false);
           setAddOpen((o) => !o);
         }}
       >
@@ -487,7 +526,9 @@ export default function Network(props: NetworkProps) {
         />
       )}
 
-      {sel && (
+      {gymOpen && <GymPanel gym={data.gym} update={update} onClose={() => setGymOpen(false)} />}
+
+      {sel && !gymOpen && (
         <DetailPanel
           key={sel.id}
           item={sel}

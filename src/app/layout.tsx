@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans, Syne } from "next/font/google";
 import "./globals.css";
+import { THEME_BOOT } from "@/lib/theme";
 
 const syne = Syne({ subsets: ["latin"], weight: ["600", "700"], variable: "--font-syne" });
 const plex = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex" });
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
   description: "Tu cabeza en un solo lugar: proyectos, tareas, ideas, plata y hábitos conectados.",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "HUB", statusBarStyle: "black-translucent" },
-  icons: { icon: "/icon.svg", apple: "/icon.svg" },
+  icons: { icon: "/icon.svg", apple: "/apple-touch-icon.png" },
 };
 
 export const viewport: Viewport = {
@@ -23,7 +24,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="es-AR" className={`${syne.variable} ${plex.variable} ${plexMono.variable}`}>
+    <html lang="es-AR" className={`${syne.variable} ${plex.variable} ${plexMono.variable}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+      </head>
       <body>{children}</body>
     </html>
   );
