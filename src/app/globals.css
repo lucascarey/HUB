@@ -174,7 +174,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .mb-task{position:absolute;right:8px;bottom:8px;opacity:0;border:1px solid var(--c-tarea);color:var(--c-tarea);background:var(--panel);border-radius:999px;font-size:11px;padding:3px 8px;cursor:pointer}
 .mb-list li:hover .mb-task,.mb-task:focus-visible{opacity:1}
 @media (hover:none){.mb-task{opacity:1;position:static;margin:0 10px 8px}}
-.mb-foot{display:flex;justify-content:flex-end}
+.mb-foot{display:flex;justify-content:space-between;gap:8px}
 .mb-link{background:none;border:0;color:var(--dim);font-size:11px;cursor:pointer;padding:2px}
 .mb-link:hover{color:var(--muted)}
 
@@ -246,4 +246,43 @@ button,input,select,textarea{font:inherit;color:inherit}
   #gym{left:max(10px, env(safe-area-inset-left,0px));right:max(10px, env(safe-area-inset-right,0px));width:auto;top:auto;bottom:calc(10px + env(safe-area-inset-bottom,0px));max-height:80%}
   .gym-pill{padding:7px 11px}
   .bar .pill{font-size:12px}
+}
+
+/* Jarvis: the assistant orb above "+", and its chat panel. */
+#jarvisOrb{position:fixed;right:calc(23px + env(safe-area-inset-right,0px));bottom:calc(94px + env(safe-area-inset-bottom,0px));z-index:30;
+  width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb, var(--c-idea) 55%, transparent);cursor:pointer;padding:0;
+  background:radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--c-idea) 30%, var(--panel)) 0%, var(--panel) 70%);
+  display:grid;place-items:center;box-shadow:0 0 24px -6px var(--c-idea)}
+#jarvisOrb .jv-core{width:16px;height:16px;border-radius:50%;background:var(--c-idea);box-shadow:0 0 14px var(--c-idea);transition:transform .3s}
+#jarvisOrb.jv-wake{border-color:var(--c-idea)}
+#jarvisOrb.jv-wake .jv-core{animation:jv-breathe 3.2s ease-in-out infinite}
+#jarvisOrb.jv-listening .jv-core{background:var(--c-dinero);box-shadow:0 0 18px var(--c-dinero);animation:jv-pulse .9s ease-in-out infinite}
+#jarvisOrb.jv-thinking .jv-core{animation:jv-spin 1s linear infinite;border-radius:30%}
+#jarvisOrb.jv-speaking .jv-core{animation:jv-pulse .5s ease-in-out infinite}
+@keyframes jv-breathe{50%{transform:scale(.75);opacity:.7}}
+@keyframes jv-pulse{50%{transform:scale(1.45)}}
+@keyframes jv-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){#jarvisOrb .jv-core{animation:none!important}}
+
+#jarvis{right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(158px + env(safe-area-inset-bottom,0px));width:390px;max-height:min(560px, 70vh);gap:10px}
+.jv-head .k{font:500 10px var(--f-mono);letter-spacing:.09em;text-transform:uppercase;color:var(--c-idea)}
+.jv-head h2{margin:2px 0 0;font:700 20px var(--f-display)}
+.jv-list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px;min-height:80px;padding-right:2px}
+.jv-msg{margin:0;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.45;max-width:88%;white-space:pre-wrap}
+.jv-user{align-self:flex-end;background:var(--panel-2);border:1px solid var(--line)}
+.jv-assistant{align-self:flex-start;background:color-mix(in srgb, var(--c-idea) 12%, var(--panel));border:1px solid color-mix(in srgb, var(--c-idea) 30%, transparent)}
+.jv-interim{opacity:.6;font-style:italic}
+.jv-dots{display:flex;gap:4px}
+.jv-dots span{width:6px;height:6px;border-radius:50%;background:var(--c-idea);animation:jv-breathe 1s ease-in-out infinite}
+.jv-dots span:nth-child(2){animation-delay:.15s}.jv-dots span:nth-child(3){animation-delay:.3s}
+.jv-input{display:flex;gap:8px}
+.jv-input input{flex:1;min-width:0;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:15px;color:var(--fg);font-family:var(--f-body)}
+.jv-mic{width:44px;flex:none;border-radius:12px;border:1px solid var(--line);background:var(--panel-2);color:var(--fg);cursor:pointer;display:grid;place-items:center}
+.jv-mic.jv-listening{background:var(--c-dinero);color:var(--bg);border-color:var(--c-dinero)}
+.jv-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px 12px;font-size:12px;color:var(--muted)}
+.jv-status{font:500 11px var(--f-mono)}
+.jv-opts{display:flex;gap:12px;align-items:center}
+.jv-opts label{display:flex;gap:5px;align-items:center;cursor:pointer}
+@media (max-width: 640px){
+  #jarvis{left:max(10px, env(safe-area-inset-left,0px));right:max(10px, env(safe-area-inset-right,0px));width:auto;bottom:calc(158px + env(safe-area-inset-bottom,0px));max-height:62vh}
 }
