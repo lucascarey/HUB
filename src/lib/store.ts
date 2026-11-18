@@ -96,6 +96,13 @@ export class CloudStore implements Store {
     this.timer = setTimeout(() => void this.flush(), 600);
   }
 
+  /** Resolves once every pending change has reached the server, so a reload can't undo newer server rows. */
+  async settle() {
+    clearTimeout(this.timer);
+    if (this.pending && !this.running) void this.flush();
+    for (let i = 0; i < 50 && (this.pending || this.running); i++) await new Promise((r) => setTimeout(r, 200));
+  }
+
   private remember(d: HubData) {
     this.last.items = new Map(d.items.map((i) => [i.id, JSON.stringify(toItemRow(i, this.userId))]));
     this.last.links = new Map(d.links.map((l) => [l.id, `${l.a}|${l.b}`]));

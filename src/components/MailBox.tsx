@@ -123,9 +123,9 @@ export default function MailBox({ x, y, dragging, onToTask }: Props) {
 
       {state.status === "not_connected" && (
         <div className="mb-cta">
-          <p className="mb-empty">Conectá tu Gmail para ver acá los mails importantes que todavía no leíste. Solo lectura: el HUB no puede mandar ni borrar nada.</p>
+          <p className="mb-empty">Conectá tu cuenta de Google para ver acá los mails importantes sin leer y para que Jarvis maneje tu calendario. Gmail es solo lectura: el HUB no puede mandar ni borrar mails.</p>
           <button type="button" className="btn main" disabled={connecting} onClick={() => void connect()}>
-            {connecting ? "Abriendo Google…" : "Conectar Gmail"}
+            {connecting ? "Abriendo Google…" : "Conectar Google"}
           </button>
         </div>
       )}
@@ -160,7 +160,8 @@ export default function MailBox({ x, y, dragging, onToTask }: Props) {
 
       {state.status === "ok" && (
         <footer className="mb-foot">
-          <button type="button" className="mb-link" onClick={() => void disconnect()}>Desconectar Gmail</button>
+          <button type="button" className="mb-link" onClick={() => void connect()}>Reconectar (para sumar Calendar)</button>
+          <button type="button" className="mb-link" onClick={() => void disconnect()}>Desconectar Google</button>
         </footer>
       )}
     </section>

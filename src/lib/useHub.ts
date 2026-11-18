@@ -85,7 +85,19 @@ export function useHub() {
     await supabase?.auth.signOut();
   }, []);
 
+  /** Pulls the latest copy from Supabase (after Jarvis changed something on the server). */
+  const reload = useCallback(async () => {
+    const cloud = store.current;
+    if (!(cloud instanceof CloudStore)) return;
+    await cloud.settle();
+    const remote = await cloud.load().catch(() => null);
+    if (remote && store.current === cloud) {
+      skipSave.current = true;
+      setData(remote);
+    }
+  }, []);
+
   const reset = useCallback(() => setData(makeSeed()), []);
 
-  return { data, update, account, status, signIn, signOut, reset, cloudEnabled: !!supabase };
+  return { data, update, account, status, signIn, signOut, reset, reload, cloudEnabled: !!supabase };
 }
