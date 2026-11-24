@@ -1,4 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { ApiError, GoogleGenAI, type Content, type Part } from "@google/genai";
+import { z } from "zod";
 import { supabaseAs, userFromRequest } from "@/lib/gmail-server";
 import { jarvisTools, todayISO, TZ, type Changed } from "@/lib/jarvis-tools";
 
@@ -6,6 +7,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type Turn = { role: "user" | "assistant"; text: string };
+
+// "gemini-flash-latest" follows Google's current Flash model, which the free tier of AI Studio includes.
+const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+const MAX_STEPS = 8;
 
 const SYSTEM = `Sos Jarvis, el asistente personal de Lucas dentro de su HUB (su "segundo cerebro"). Hablás en español rioplatense, con voseo, tono cercano y directo.
 
@@ -16,8 +21,9 @@ Lo que podés hacer con tus herramientas:
 - Google Calendar: ver, crear, mover y borrar eventos.
 
 Cómo trabajás:
-- Muchas veces Lucas te habla por voz y tu respuesta se lee en voz alta: respondé corto (una a tres oraciones), sin listas largas, sin markdown, sin emojis. Las horas en formato de 24 h dichas naturalmente ("a las 15", "a las 9 y media").
-- Si el pedido es claro, hacelo directamente y contá en una frase qué hiciste. No pidas confirmación para crear o editar cosas.
+- Muchas veces Lucas te habla por voz y tu respuesta se lee en voz alta: respondé corto (una a tres oraciones), sin listas largas, sin markdown, sin emojis. Las horas dichas naturalmente ("a las 15", "a las 9 y media").
+- Si el pedido es claro, hacelo directamente con las herramientas y contá en una frase qué hiciste. No pidas confirmación para crear o editar cosas.
+- Nunca digas que hiciste algo si no llamaste a la herramienta y te respondió ok.
 - Para borrar un evento, asegurate de que Lucas lo pidió de forma explícita.
 - Si falta un dato imprescindible (por ejemplo, la hora de una reunión), preguntá solo eso.
 - "Agendá" o "poneme en el calendario" con día y hora es un evento de Google Calendar. "Anotá", "acordame de" o algo sin hora es un item del HUB (tarea, idea, etc.).
@@ -25,19 +31,24 @@ Cómo trabajás:
 - Si una herramienta devuelve un error de conexión o permisos, explicale a Lucas en una frase qué tiene que hacer.
 - Zona horaria: Argentina (${TZ}).`;
 
-const client = new Anthropic();
-
 function now() {
-  const d = new Date();
   const fmt = new Intl.DateTimeFormat("es-AR", {
     timeZone: TZ, weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit",
   });
-  return `Ahora es ${fmt.format(d)} (fecha ${todayISO()}).`;
+  return `Ahora es ${fmt.format(new Date())} (fecha ${todayISO()}).`;
 }
 
-/** Jarvis: Claude with tools over the signed-in person's HUB, Gmail and Google Calendar. */
+/** JSON Schema for a tool's arguments, without the $schema header Gemini doesn't need. */
+function schemaFor(s: z.ZodObject) {
+  const { $schema: _drop, ...rest } = z.toJSONSchema(s) as Record<string, unknown>;
+  void _drop;
+  return rest;
+}
+
+/** Jarvis: Gemini with tools over the signed-in person's HUB, Gmail and Google Calendar. */
 export async function POST(req: Request) {
-  if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: "not_configured" }, { status: 503 });
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return Response.json({ error: "not_configured" }, { status: 503 });
   const user = await userFromRequest(req);
   if (!user) return Response.json({ error: "unauthorized" }, { status: 401 });
   // Only the HUB owner may spend the API key.
@@ -55,37 +66,60 @@ export async function POST(req: Request) {
 
   const changed: Changed = { hub: false, calendar: false };
   const tools = jarvisTools(supabaseAs(user.token), changed);
+  const byName = new Map(tools.map((t) => [t.name, t]));
+  const ai = new GoogleGenAI({ apiKey: key });
+  const config = {
+    systemInstruction: `${SYSTEM}\n\n${now()}`,
+    tools: [{
+      functionDeclarations: tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        parametersJsonSchema: schemaFor(t.inputSchema),
+      })),
+    }],
+  };
+  const contents: Content[] = turns.map((t) => ({ role: t.role === "user" ? "user" : "model", parts: [{ text: t.text }] }));
 
   try {
-    const final = await client.beta.messages.toolRunner({
-      model: "claude-opus-5-5",
-      max_tokens: 4000,
-      // Short spoken replies: low effort keeps the voice loop quick.
-      output_config: { effort: "low" },
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      thread: false,
-      max_iterations: 8,
-      system: [
-        { type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } },
-        { type: "text", text: now() },
-      ],
-      tools,
-      messages: turns.map((t) => ({ role: t.role, content: t.text })),
-    });
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const res = await ai.models.generateContent({ model: MODEL, contents, config });
+      const calls = res.functionCalls ?? [];
+      if (!calls.length) {
+        const text = (res.text ?? "").trim();
+        return Response.json({ text: text || "Listo.", changed });
+      }
+      // Keep the model's turn exactly as returned (it carries thought signatures Gemini needs back).
+      const modelTurn = res.candidates?.[0]?.content;
+      contents.push(modelTurn ?? { role: "model", parts: calls.map((c) => ({ functionCall: c })) });
 
-    if (final.stop_reason === "refusal")
-      return Response.json({ text: "Eso no lo puedo hacer.", changed });
-    const text = final.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n")
-      .trim();
-    return Response.json({ text: text || "Listo.", changed });
+      const results: Part[] = await Promise.all(calls.map(async (call): Promise<Part> => {
+        const t = call.name ? byName.get(call.name) : undefined;
+        let output: string;
+        if (!t) output = `No existe la herramienta ${call.name}.`;
+        else {
+          const args = t.inputSchema.safeParse(call.args ?? {});
+          if (!args.success) output = `Argumentos inválidos: ${args.error.message.slice(0, 300)}`;
+          else {
+            try {
+              output = await (t.run as (a: unknown) => Promise<string>)(args.data);
+            } catch (e) {
+              console.error("jarvis tool", call.name, e);
+              output = `Error: ${String(e).slice(0, 200)}`;
+            }
+          }
+        }
+        return { functionResponse: { id: call.id, name: call.name, response: { output } } };
+      }));
+      contents.push({ role: "user", parts: results });
+    }
+    return Response.json({ text: "Me trabé haciendo eso. Probá pedírmelo más simple.", changed });
   } catch (e) {
     console.error("jarvis", e);
-    if (e instanceof Anthropic.AuthenticationError) return Response.json({ error: "bad_key" }, { status: 503 });
-    if (e instanceof Anthropic.RateLimitError) return Response.json({ error: "rate_limited" }, { status: 429 });
+    if (e instanceof ApiError) {
+      if (e.status === 429) return Response.json({ error: "rate_limited" }, { status: 429 });
+      if (e.status === 400 && /API key/i.test(e.message)) return Response.json({ error: "bad_key" }, { status: 503 });
+      if (e.status === 401 || e.status === 403) return Response.json({ error: "bad_key" }, { status: 503 });
+    }
     return Response.json({ error: "error" }, { status: 502 });
   }
 }

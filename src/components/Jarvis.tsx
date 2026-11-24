@@ -208,11 +208,11 @@ export default function Jarvis({ signedIn, onChanged }: Props) {
         if (json.changed?.hub) onChanged();
       } else {
         reply =
-          json.error === "not_configured" ? "Todavía falta cargar la clave de la API de Claude en Vercel."
+          json.error === "not_configured" ? "Todavía falta cargar la clave de Gemini en Vercel."
           : json.error === "unauthorized" ? "Iniciá sesión en el HUB para que pueda ayudarte."
           : json.error === "forbidden" ? "Este Jarvis es solo de Lucas."
-          : json.error === "bad_key" ? "La clave de la API de Claude no funciona. Revisala en Vercel."
-          : json.error === "rate_limited" ? "Estoy saturado, probá en un ratito."
+          : json.error === "bad_key" ? "La clave de Gemini no funciona. Revisala en Vercel."
+          : json.error === "rate_limited" ? "Llegué al límite gratis de Gemini por ahora. Probá en un rato."
           : "Algo falló. Probá de nuevo.";
       }
     } catch {

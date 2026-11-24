@@ -1,5 +1,4 @@
 import "server-only";
-import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { calendar, gmail, refreshAccess } from "./gmail-server";
@@ -20,11 +19,22 @@ export type Changed = { hub: boolean; calendar: boolean };
 
 const json = (v: unknown) => JSON.stringify(v);
 
+/** One thing Jarvis can do: a name and description for the model, a zod schema for its arguments, and the code. */
+export interface JarvisTool {
+  name: string;
+  description: string;
+  inputSchema: z.ZodObject;
+  run: (args: never) => Promise<string>;
+}
+function tool<S extends z.ZodObject>(t: { name: string; description: string; inputSchema: S; run: (args: z.infer<S>) => Promise<string> }): JarvisTool {
+  return t as unknown as JarvisTool;
+}
+
 /**
  * The tools Jarvis can use, acting as the signed-in person (their Supabase session, so row security applies).
  * Each tool returns a short JSON string or a plain error sentence the model can relay.
  */
-export function jarvisTools(sb: SupabaseClient, changed: Changed) {
+export function jarvisTools(sb: SupabaseClient, changed: Changed): JarvisTool[] {
   let access: Promise<string | null> | null = null;
   /** Google access token from the stored refresh token, or null when Google is not connected. */
   const google = () =>
@@ -44,7 +54,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     return `Error de Google: ${msg.slice(0, 200)}`;
   };
 
-  const buscarItems = betaZodTool({
+  const buscarItems = tool({
     name: "buscar_items",
     description:
       "Busca en el HUB: proyectos, tareas, eventos, ideas, plata (deudas/pagos) y hábitos. Devuelve id, tipo, título, fecha, hecho y proyecto. Usalo antes de editar algo para conseguir su id.",
@@ -78,7 +88,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     },
   });
 
-  const crearItem = betaZodTool({
+  const crearItem = tool({
     name: "crear_item",
     description:
       "Crea algo en el HUB: una tarea, idea, evento, deuda/pago (tipo dinero), hábito o proyecto. Si pertenece a un proyecto, pasá su nombre en `proyecto`.",
@@ -111,7 +121,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     },
   });
 
-  const actualizarItem = betaZodTool({
+  const actualizarItem = tool({
     name: "actualizar_item",
     description: "Cambia algo del HUB por id: marcar hecho/no hecho, renombrar o cambiar la fecha (\"\" la quita).",
     inputSchema: z.object({
@@ -134,7 +144,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     },
   });
 
-  const verGym = betaZodTool({
+  const verGym = tool({
     name: "ver_gym",
     description: "Lee el registro de gimnasio: series con ejercicio, kilos, repeticiones y fecha. Sirve para récords y progreso.",
     inputSchema: z.object({
@@ -151,7 +161,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     },
   });
 
-  const registrarGym = betaZodTool({
+  const registrarGym = tool({
     name: "registrar_gym",
     description: "Anota una serie (o varias iguales) en el registro de gimnasio.",
     inputSchema: z.object({
@@ -170,7 +180,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     },
   });
 
-  const leerMails = betaZodTool({
+  const leerMails = tool({
     name: "leer_mails",
     description:
       "Lee Gmail (solo lectura). `busqueda` usa la sintaxis de búsqueda de Gmail; por defecto los no leídos de la bandeja de entrada.",
@@ -211,7 +221,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
   const when = (v: string, allDay: boolean) => (allDay ? { date: v.slice(0, 10) } : { dateTime: v.length === 16 ? `${v}:00` : v, timeZone: TZ });
   const hora = z.string().describe("YYYY-MM-DDTHH:MM en hora de Argentina, o YYYY-MM-DD si es todo el día");
 
-  const verCalendario = betaZodTool({
+  const verCalendario = tool({
     name: "ver_calendario",
     description: "Lista los eventos de Google Calendar (calendario principal) entre dos fechas, inclusive.",
     inputSchema: z.object({ desde: fecha, hasta: fecha, texto: z.string().optional() }),
@@ -232,7 +242,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     },
   });
 
-  const crearEvento = betaZodTool({
+  const crearEvento = tool({
     name: "crear_evento",
     description: "Crea un evento en Google Calendar. Si no hay hora de fin, dura una hora.",
     inputSchema: z.object({
@@ -267,7 +277,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     },
   });
 
-  const editarEvento = betaZodTool({
+  const editarEvento = tool({
     name: "editar_evento",
     description: "Cambia un evento de Google Calendar por id (de ver_calendario): título, horario, lugar o descripción.",
     inputSchema: z.object({
@@ -300,7 +310,7 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed) {
     },
   });
 
-  const borrarEvento = betaZodTool({
+  const borrarEvento = tool({
     name: "borrar_evento",
     description: "Borra un evento de Google Calendar por id. Solo cuando Lucas lo pide explícitamente.",
     inputSchema: z.object({ id: z.string() }),
