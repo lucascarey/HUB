@@ -7,7 +7,7 @@ export const maxDuration = 30;
 
 // Gemini's speech models (free tier of AI Studio, with a smaller daily limit than chat).
 const MODELS = [process.env.GEMINI_TTS_MODEL, "gemini-2.5-flash-preview-tts", "gemini-2.5-flash-tts"].filter(Boolean) as string[];
-const VOICE = process.env.GEMINI_TTS_VOICE || "Charon";
+const VOICE = process.env.GEMINI_TTS_VOICE || "Algenib";
 const RATE = 24000;
 
 /** Raw 16-bit mono PCM → a WAV file the browser can play. */
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
   }
 
   const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
-  const prompt = `Decilo en español rioplatense de Buenos Aires, con voz cálida, natural y un poco canchera, a ritmo de charla:\n${text}`;
+  const prompt = `Decilo en español rioplatense de Buenos Aires, como un robot seco y terco: voz grave, tono plano y deadpan, sin entusiasmo, pausado y con ironía apenas insinuada:\n${text}`;
   for (const model of MODELS) {
     try {
       const res = await ai.models.generateContent({

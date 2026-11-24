@@ -22,7 +22,7 @@ async function bearer() {
 
 /**
  * Jarvis as a desktop companion: a small head with Cozmo's eyes that wanders along the bottom of the
- * screen, peeks, falls asleep, hides, wakes up with "Hey Jarvis", and speaks up on its own for
+ * screen, peeks, falls asleep, hides, wakes up with "Cosmo, …", and speaks up on its own for
  * upcoming events and a morning hello. Movement only happens inside the Windows app.
  */
 export default function Companion() {
@@ -186,7 +186,7 @@ function Alive() {
         if (left > 0 && left <= REMIND_BEFORE) {
           wakeUp();
           const mins = Math.max(1, Math.round(left / 60_000));
-          if (say(`Che, en ${mins} ${mins === 1 ? "minuto" : "minutos"} tenés ${ev.title}.`, "sorprendido")) {
+          if (say(`En ${mins} ${mins === 1 ? "minuto" : "minutos"} tenés ${ev.title}. Te aviso porque te conozco.`, "sospechoso")) {
             seen = [...seen, ev.id].slice(-50);
             try {
               localStorage.setItem(SEEN_KEY, JSON.stringify(seen));

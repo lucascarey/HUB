@@ -89,7 +89,7 @@ async function speak(text) {
   const tts = new MsEdgeTTS();
   try {
     await tts.setMetadata(VOICE, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-    const { audioStream } = tts.toStream(String(text).slice(0, 1500), { rate: "+6%" });
+    const { audioStream } = tts.toStream(String(text).slice(0, 1500), { rate: "-4%", pitch: "-9Hz" });
     const chunks = [];
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("timeout")), 15000);
