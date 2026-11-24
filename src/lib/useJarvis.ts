@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isEmotion, type Emotion } from "./cozmo";
 import { supabase } from "./supabase";
-import { startWakeWord, stopWakeWord, wakeWordKey } from "./wakeword";
+import { startWakeWord, stopWakeWord } from "./wakeword";
 
 export type Turn = { role: "user" | "assistant"; text: string };
 export type Phase = "idle" | "listening" | "thinking" | "speaking";
@@ -157,7 +157,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   // Hands-free listening restarts itself after every phrase while the mode is on.
   const startListening = useCallback((mode: "command" | "wake") => {
     // Hands-free with the on-device "Jarvis" detector (works with the tab in the background).
-    if (mode === "wake" && wakeWordKey && !wakeWordFailed.current) {
+    if (mode === "wake" && !wakeWordFailed.current) {
       startWakeWord(() => {
         if (!wakeRef.current || phaseRef.current !== "idle") return;
         void stopWakeWord();
@@ -166,7 +166,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       }).catch((e) => {
         console.error("wake word", e);
         wakeWordFailed.current = true;
-        setNote("No pude activar la palabra \"Jarvis\". Uso el modo simple.");
+        setNote("No pude activar \"Hey Jarvis\". Uso el modo simple.");
         if (wakeRef.current) startListening("wake");
       });
       return;

@@ -9,7 +9,6 @@ import type { SyncStatus } from "@/lib/store";
 import type { HubData } from "@/lib/types";
 import type { Account } from "@/lib/useHub";
 import { useJarvis } from "@/lib/useJarvis";
-import { wakeWordKey } from "@/lib/wakeword";
 import CozmoFace from "./CozmoFace";
 import GymPanel from "./GymPanel";
 import Header from "./Header";
@@ -226,7 +225,7 @@ export default function Brain(p: Props) {
     jarvis.interim ||
     (jarvis.phase === "thinking" ? "Pensando…" : "") ||
     jarvis.lastReply ||
-    (signedIn ? (jarvis.wake ? "Decí “Jarvis” y lo que necesites." : "Hola, Lucas. Tocá el micrófono o escribime.") : "Iniciá sesión desde Cuenta para despertarme.");
+    (signedIn ? (jarvis.wake ? "Decí “Hey Jarvis” y lo que necesites." : "Hola, Lucas. Tocá el micrófono o escribime.") : "Iniciá sesión desde Cuenta para despertarme.");
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -345,7 +344,7 @@ export default function Brain(p: Props) {
       <div className="br-opts">
         <label><input type="checkbox" checked={jarvis.voice} onChange={(e) => jarvis.setVoice(e.target.checked)} /> Voz</label>
         {jarvis.supported && (
-          <label title={wakeWordKey ? "Decí \"Jarvis\" y te escucha, aunque el HUB esté en segundo plano" : "Mientras el HUB está abierto en pantalla"}><input type="checkbox" checked={jarvis.wake} onChange={jarvis.toggleWake} /> Manos libres</label>
+          <label title="Decí “Hey Jarvis” y te escucha, aunque el HUB esté minimizado"><input type="checkbox" checked={jarvis.wake} onChange={jarvis.toggleWake} /> Manos libres</label>
         )}
         <Link href="/red">Vista red</Link>
       </div>
