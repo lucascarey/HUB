@@ -1,6 +1,6 @@
 
 /* Layout: a dark, pannable 2D space; items float as outlined cells joined by curved "synapses"; projects open into their own space. */
-:root{
+:root{--font-syne:"Syne";--font-plex:"IBM Plex Sans";--font-plex-mono:"IBM Plex Mono";
   color-scheme: dark;
   --bg:#06070a; --bg-dot:#1a1d27; --panel:#0f1117; --panel-2:#151822; --line:#262a36;
   --fg:#eceef5; --muted:#8d92a6; --dim:#5b6073;
