@@ -39,7 +39,7 @@ async function token() {
   return data.session?.access_token ?? null;
 }
 
-function speak(text: string, onEnd: () => void) {
+function browserSpeak(text: string, onEnd: () => void) {
   const synth = typeof window !== "undefined" ? window.speechSynthesis : undefined;
   if (!synth) return onEnd();
   synth.cancel();
@@ -52,6 +52,52 @@ function speak(text: string, onEnd: () => void) {
   u.onend = onEnd;
   u.onerror = onEnd;
   synth.speak(u);
+}
+
+let playing: HTMLAudioElement | null = null;
+// After Gemini's voice hits its free daily limit, use the browser voice until the page reloads.
+let humanVoiceOff = false;
+
+function stopSpeaking() {
+  playing?.pause();
+  playing = null;
+  window.speechSynthesis?.cancel();
+}
+
+/** Speaks with Gemini's human voice, or the browser's voice if that isn't available. */
+async function speak(text: string, onEnd: () => void) {
+  stopSpeaking();
+  const t = humanVoiceOff ? null : await token();
+  if (t) {
+    try {
+      const res = await fetch("/api/voz", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+        body: JSON.stringify({ text }),
+      });
+      if (res.ok) {
+        const url = URL.createObjectURL(await res.blob());
+        const a = new Audio(url);
+        playing = a;
+        const done = () => {
+          URL.revokeObjectURL(url);
+          if (playing === a) {
+            playing = null;
+            onEnd();
+          }
+        };
+        a.onended = done;
+        a.onerror = done;
+        await a.play();
+        return;
+      }
+      if (res.status === 429 || res.status === 503) humanVoiceOff = true;
+    } catch {
+      // Autoplay blocked or no connection: fall back below.
+      playing = null;
+    }
+  }
+  browserSpeak(text, onEnd);
 }
 
 interface Options {
@@ -227,7 +273,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     };
     if (voice) {
       setP("speaking");
-      speak(reply, resume);
+      void speak(reply, resume);
     } else resume();
   };
 
@@ -260,7 +306,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
 
   const mic = () => {
     if (phase === "speaking") {
-      window.speechSynthesis?.cancel();
+      stopSpeaking();
       setP("idle");
       return;
     }
