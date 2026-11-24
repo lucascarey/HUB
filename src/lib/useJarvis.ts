@@ -8,6 +8,9 @@ import { startWakeWord, stopWakeWord } from "./wakeword";
 import { LiveChat } from "./live";
 import { chirp, hush as hushChirps, moodFor } from "./droid";
 
+/** "¡Pará!" and friends: stop what he's doing on the computer. */
+const STOP_RE = /(^|[^a-záéíóúñ])(pará|frená|basta|stop|det[eé]nete)(?![a-záéíóúñ])/i;
+
 /** Goodbyes that end a live chat once he's answered. */
 const BYE_RE = /\b(chau|chao|adi[oó]s|nos vemos|hasta luego|eso es todo)\b/i;
 
@@ -36,6 +39,8 @@ export interface DesktopBridge {
   screenshot?(): Promise<string | null>;
   /** Types text where Lucas's cursor is (or only copies it); missing before 0.1.4. */
   write?(text: string, paste: boolean): Promise<boolean>;
+  /** Mouse/keyboard on Lucas's computer (x, y from 0 to 1000 over the main screen); missing before 0.2.0. */
+  pc?(action: PcAction): Promise<boolean>;
   /** Opens a link in the normal browser; missing before 0.1.4. */
   openUrl?(url: string): void;
   /** Mouse position relative to the centre of Cosmo's window (px); missing before 0.1.6. */
@@ -43,6 +48,10 @@ export interface DesktopBridge {
   /** Listens for "Cosmo, …" with Windows' speech recognizer; returns the stop function. Missing before 0.1.5. */
   onCosmo?(cb: (m: CosmoEvent) => void): () => void;
 }
+export type PcAction = {
+  type: string; x?: number; y?: number; x2?: number; y2?: number; text?: string; keys?: string;
+  direction?: string; amount?: number; seconds?: number; url?: string; nota?: string; texto?: string;
+};
 export type CosmoEvent =
   | { type: "ready"; culture: string }
   | { type: "heard"; only: boolean; confidence: number; wav: string | null }
@@ -222,6 +231,10 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   const liveFailedAt = useRef(0);
   const liveDown = () => Date.now() - liveFailedAt.current < 120_000;
   const liveTurn = useRef<{ user: number; assistant: number }>({ user: -1, assistant: -1 });
+  // Using the computer: the goal waiting for him to finish answering, and whether he's at it (a click stops him).
+  const pendingPc = useRef<string | null>(null);
+  const pcRunning = useRef(false);
+  const pcAbort = useRef(false);
 
   const setP = (p: Phase) => {
     phaseRef.current = p;
@@ -346,6 +359,18 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       setP("speaking");
       const secs = chirp(said, moodFor(mood, said));
       await new Promise((r) => setTimeout(r, Math.max(900, secs * 1000 + 200)));
+      const goal = pendingPc.current;
+      pendingPc.current = null;
+      if (goal && live.current === chat) {
+        const done = await pcLoop(goal);
+        if (live.current === chat) {
+          push({ role: "assistant", text: done.text });
+          setEmotion(done.mood);
+          setP("speaking");
+          const s2 = chirp(done.text, moodFor(done.mood, done.text));
+          await new Promise((r) => setTimeout(r, Math.max(900, s2 * 1000 + 200)));
+        }
+      }
       chat.hold(false);
       if (live.current !== chat) return;
       if (BYE_RE.test(text)) return chat.stop("bye");
@@ -356,6 +381,8 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       desktop: true,
       droid: true,
       ears: (text) => {
+        // "¡Pará!" while he's using the computer stops him right away.
+        if (pcRunning.current && (STOP_RE.test(text) || (text.split(/\s+/).length <= 3 && /\b(para|frena)\b/i.test(text)))) pcAbort.current = true;
         queue = queue.then(() => reply(text)).catch((e) => console.error("live reply", e));
       },
       onState: (s) => {
@@ -614,6 +641,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       for (const a of Array.isArray(json.actions) ? json.actions : []) {
         if (a?.type === "write" && typeof a.text === "string") await d?.write?.(a.text, a.paste !== false).catch(() => false);
         else if (a?.type === "open" && typeof a.url === "string") d?.openUrl?.(a.url);
+        else if (a?.type === "pc" && typeof a.goal === "string") pendingPc.current = a.goal;
       }
       if (json.text) {
         reply = json.text;
@@ -640,6 +668,80 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     return { reply, mood };
   };
 
+  /**
+   * Cosmo uses the computer: look at the screen, ask the server for the next step, do it, repeat.
+   * Returns what he tells Lucas at the end (done, a question, or why he couldn't).
+   */
+  const pcLoop = async (goal: string): Promise<{ text: string; mood: Emotion }> => {
+    const d = desktop();
+    if (!d?.pc || !d.screenshot) return { text: "Para usar el mouse y el teclado necesito la app nueva. Bajala de nuevo e instalala.", mood: "triste" };
+    pcRunning.current = true;
+    pcAbort.current = false;
+    setP("thinking");
+    setEmotion("concentrado");
+    diag("pc-start", goal.slice(0, 120));
+    const steps: { action: string; ok: boolean }[] = [];
+    try {
+      for (let i = 0; i < 25; i++) {
+        if (pcAbort.current) return { text: "Listo, paré.", mood: "normal" };
+        const screen = await d.screenshot().catch(() => null);
+        if (!screen) return { text: "No pude ver tu pantalla.", mood: "triste" };
+        const t = await token();
+        const res = await fetch("/api/jarvis/pc", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+          body: JSON.stringify({ goal, steps, screen }),
+        }).catch(() => null);
+        const json = res ? await res.json().catch(() => ({})) : {};
+        const a: PcAction | undefined = json.action;
+        if (!a) return { text: json.error === "rate_limited" ? "Llegué al límite gratis de Gemini. Probá en un rato." : "Se cortó la conexión mientras lo hacía.", mood: "triste" };
+        if (pcAbort.current) return { text: "Listo, paré.", mood: "normal" };
+        if (a.type === "done") return { text: a.texto || "Listo.", mood: "feliz" };
+        if (a.type === "ask") return { text: a.texto || "¿Sigo?", mood: "sospechoso" };
+        if (a.type === "fail") return { text: a.texto || "No pude hacerlo.", mood: "triste" };
+        if (a.nota) setInterim(a.nota);
+        let ok = true;
+        if (a.type === "wait") await new Promise((r) => setTimeout(r, Math.min(8, Math.max(0.5, Number(a.seconds) || 1.5)) * 1000));
+        else if (a.type === "open" && a.url) d.openUrl?.(a.url);
+        else ok = await d.pc(a).catch(() => false);
+        steps.push({ action: JSON.stringify(a), ok });
+        // Let the screen react before looking again.
+        await new Promise((r) => setTimeout(r, a.type === "type" || a.type === "keys" ? 900 : 700));
+      }
+      return { text: "Me trabé y lo dejé por la mitad. ¿Me lo pedís de otra forma?", mood: "triste" };
+    } finally {
+      pcRunning.current = false;
+      setInterim("");
+      diag("pc-end", { steps: steps.length, aborted: pcAbort.current });
+    }
+  };
+
+  /**
+   * A quiet look at Lucas's screen: returns a short, useful comment, or "" when there's nothing worth saying.
+   * Nothing is added to the conversation unless he says something.
+   */
+  const peek = async (): Promise<string> => {
+    const d = desktop();
+    if (!d?.screenshot || phaseRef.current !== "idle") return "";
+    const screen = await d.screenshot().catch(() => null);
+    if (!screen) return "";
+    const t = await token();
+    const prompt =
+      "(Mensaje automático de la app, no lo escribió Lucas.) Esta es la pantalla de Lucas ahora mismo. Si ves algo concreto en lo que " +
+      "puedas aportar de verdad (una idea, un dato, un atajo, un error que se le pasó, algo de su memoria o sus proyectos que tenga que ver), " +
+      "decíselo en una o dos frases, como un amigo que mira por encima del hombro. No describas la pantalla. " +
+      "Si no hay nada que valga la pena o está en algo privado, respondé exactamente: NADA";
+    const res = await fetch("/api/jarvis", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+      body: JSON.stringify({ turns: [...turnsRef.current.slice(-6), { role: "user", text: prompt }], screen }),
+    }).catch(() => null);
+    const json = res ? await res.json().catch(() => ({})) : {};
+    const text = String(json.text ?? "").trim();
+    diag("peek", text.slice(0, 60));
+    return !text || /^nada\b/i.test(text) ? "" : text;
+  };
+
   const ask = async (q: string) => {
     const question = q.trim();
     if (!question) return;
@@ -657,10 +759,24 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       setP("idle");
       if (wakeRef.current) startListening("wake");
     };
+    // He said he'd do something on the computer: do it now, then tell how it went.
+    const afterReply = () => {
+      const goal = pendingPc.current;
+      pendingPc.current = null;
+      if (!goal) return resume();
+      void pcLoop(goal).then(({ text, mood: m }) => {
+        setEmotion(m);
+        push({ role: "assistant", text });
+        if (voice) {
+          setP("speaking");
+          void speak(text, resume, m);
+        } else resume();
+      });
+    };
     if (voice) {
       setP("speaking");
-      void speak(reply, resume, mood);
-    } else resume();
+      void speak(reply, afterReply, mood);
+    } else afterReply();
   };
 
   askRef.current = ask;
@@ -712,6 +828,8 @@ export function useJarvis({ signedIn, onChanged }: Options) {
 
   const mic = () => {
     diag("click", { phase: phaseRef.current, live: !!live.current, liveDown: liveDown() });
+    // Using the computer: a click stops him.
+    if (pcRunning.current) return void (pcAbort.current = true);
     // In a live chat a click hangs up; on the desktop, a click opens one.
     if (live.current) return live.current.stop("stopped");
     // Stuck waiting for an answer: a click cancels it and starts over.
@@ -753,6 +871,6 @@ export function useJarvis({ signedIn, onChanged }: Options) {
 
   return {
     open, setOpen, turns, phase, interim, voice, setVoice, wake, toggleWake, note, supported,
-    emotion, setEmotion, changes, lastReply, ask, say, mic, clear,
+    emotion, setEmotion, changes, lastReply, ask, say, mic, clear, peek,
   };
 }

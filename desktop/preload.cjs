@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("jarvisDesktop", {
   screenshot: () => ipcRenderer.invoke("screenshot"),
   gaze: () => ipcRenderer.invoke("gaze"),
   write: (text, paste) => ipcRenderer.invoke("write", String(text), paste !== false),
+  pc: (action) => ipcRenderer.invoke("pc", action),
   openUrl: (url) => ipcRenderer.send("open-url", String(url)),
   onCosmo: (cb) => {
     const h = (_e, m) => cb(m);

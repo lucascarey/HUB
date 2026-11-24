@@ -18,7 +18,10 @@ const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha YYYY-MM-DD
 export type Changed = { hub: boolean; calendar: boolean; memory: boolean };
 
 /** Something the desktop app does on Lucas's computer after the answer arrives. */
-export type DesktopAction = { type: "write"; text: string; paste: boolean } | { type: "open"; url: string };
+export type DesktopAction =
+  | { type: "write"; text: string; paste: boolean }
+  | { type: "open"; url: string }
+  | { type: "pc"; goal: string };
 
 const json = (v: unknown) => JSON.stringify(v);
 
@@ -420,6 +423,18 @@ export function desktopTools(actions: DesktopAction[]): JarvisTool[] {
       run: async (q) => {
         actions.push({ type: "write", text: q.texto, paste: q.pegar !== false });
         return q.pegar === false ? "Copiado." : "Escrito donde está el cursor (y copiado).";
+      },
+    }),
+    tool({
+      name: "usar_compu",
+      description:
+        "Usa la compu de Lucas con el mouse y el teclado (mirando la pantalla) para hacer una tarea: abrir un programa, " +
+        "buscar algo, llenar un formulario, poner música, ordenar ventanas, etc. Describí el objetivo completo y concreto. " +
+        "Empieza cuando termines de contestar, así que avisale en una frase que te ponés con eso.",
+      inputSchema: z.object({ objetivo: z.string().min(3).max(2000) }),
+      run: async (q) => {
+        actions.push({ type: "pc", goal: q.objetivo });
+        return "Listo: apenas contestes, empezás a hacerlo en su pantalla.";
       },
     }),
     tool({

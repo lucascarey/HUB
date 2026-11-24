@@ -21,6 +21,15 @@ const MAIL_EVERY = 3 * 60_000;
 const CURIOUS_MIN = 45 * 60_000;
 const CURIOUS_MAX = 100 * 60_000;
 const CURIOUS_PER_DAY = 5;
+/** Now and then he glances at the screen and chips in, only when he has something worth saying. */
+const PEEK_MIN = 20 * 60_000;
+const PEEK_MAX = 40 * 60_000;
+const PEEK_PER_DAY = 8;
+const PEEK_KEY = "cosmo-peeks";
+const MORNING =
+  "(Mensaje automático de la app: Lucas acaba de prender la compu, es la primera vez hoy.) Dale su resumen del día, corto y con onda, " +
+  "como un amigo que ya se fijó todo: saludo, qué tiene hoy en el calendario (ver_calendario), si hay mails importantes sin leer (leer_mails), " +
+  "y uno o dos pendientes o proyectos del HUB que convenga mover hoy (buscar_items y lo que recordás). Máximo 5 frases, sin listas.";
 const CURIOUS_PROMPT =
   "(Mensaje automático de la app, no lo escribió Lucas.) Es un buen momento para conocerlo mejor y armar su cerebro: " +
   "mirá lo que ya recordás de él y hacele UNA pregunta corta y natural sobre algo que todavía no sepas o que convenga actualizar " +
@@ -285,7 +294,7 @@ function Alive() {
         if (localStorage.getItem(GREET_KEY) !== today && new Date().getHours() >= 6) {
           localStorage.setItem(GREET_KEY, today);
           wakeUp();
-          void jarvis.ask("Acabo de prender la compu. Saludame corto y contame en una o dos frases qué tengo hoy.");
+          void jarvis.ask(MORNING);
           return;
         }
       } catch {}
@@ -390,6 +399,36 @@ function Alive() {
         };
         setTimeout(() => listen(20), 1500);
       });
+    };
+    plan();
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Looks over his shoulder now and then: a tip, an idea or a heads-up about what's on screen (or nothing).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const plan = () => {
+      timer = setTimeout(run, rand(PEEK_MIN, PEEK_MAX));
+    };
+    const run = async () => {
+      plan();
+      const h = new Date().getHours();
+      if (h < 9 || h >= 23 || phaseRef.current !== "idle" || moodRef.current === "hidden") return;
+      const today = new Date().toLocaleDateString("sv-SE");
+      let log = { day: today, n: 0 };
+      try {
+        const saved = JSON.parse(localStorage.getItem(PEEK_KEY) ?? "null");
+        if (saved?.day === today) log = saved;
+      } catch {}
+      if (log.n >= PEEK_PER_DAY) return;
+      const text = await jarvis.peek().catch(() => "");
+      if (!text || phaseRef.current !== "idle") return;
+      try {
+        localStorage.setItem(PEEK_KEY, JSON.stringify({ day: today, n: log.n + 1 }));
+      } catch {}
+      wakeUp();
+      say(text, "picaro");
     };
     plan();
     return () => clearTimeout(timer);

@@ -49,7 +49,8 @@ Tus manos (solo en la app de escritorio, cuando tenés las herramientas "escribi
 - "Escribí", "contestale", "redactame", "poneme acá" → armá el texto completo y usá "escribir": queda escrito donde Lucas tiene el cursor (y copiado). Escribilo como lo escribiría Lucas, en su tono, listo para mandar. Si hay captura, usala para entender a quién y qué contestar.
 - "Copiame" → "escribir" con pegar=false.
 - "Abrí", "buscá en Google", "poneme tal video" → "abrir" con el link.
-- Después de escribir, decí solo algo corto como "Listo, te lo dejé escrito." No leas el texto en voz alta.`;
+- Después de escribir, decí solo algo corto como "Listo, te lo dejé escrito." No leas el texto en voz alta.
+- Cualquier cosa que haya que hacer en la compu con mouse y teclado ("abrí Spotify y poné algo tranqui", "cerrá estas ventanas", "llená este formulario", "buscame en la carpeta tal…") → "usar_compu" con el objetivo completo y concreto (incluí los datos que hagan falta). Contestá en una frase corta que te ponés ("Dale, voy."). Para solo abrir un link, alcanza con "abrir".`;
 
 export function now() {
   const fmt = new Intl.DateTimeFormat("es-AR", {

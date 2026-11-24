@@ -1,7 +1,7 @@
 {
   "name": "jarvis-escritorio",
   "productName": "Jarvis",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Jarvis, el compañero de escritorio del HUB",
   "author": "Lucas Carey",
   "private": true,

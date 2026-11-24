@@ -140,6 +140,144 @@ async function write(text, paste) {
   });
 }
 
+
+/*
+ * Cosmo's hands: a PowerShell helper that moves the mouse, clicks, scrolls and presses keys (Windows APIs),
+ * fed one command per line. Coordinates arrive normalized (0–1000 on the screenshot) and become real pixels here.
+ */
+const HANDS_PS1 = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class H {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, int d, UIntPtr e);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte sc, uint f, UIntPtr e);
+}
+"@
+[H]::SetProcessDPIAware() | Out-Null
+$z = [UIntPtr]::Zero
+function Btn($down, $up) { [H]::mouse_event($down, 0, 0, 0, $z); Start-Sleep -Milliseconds 40; [H]::mouse_event($up, 0, 0, 0, $z) }
+[Console]::Out.WriteLine('READY')
+while ($null -ne ($line = [Console]::In.ReadLine())) {
+  $p = $line.Split(' ')
+  try {
+    switch ($p[0]) {
+      'move' { [H]::SetCursorPos([int]$p[1], [int]$p[2]) | Out-Null }
+      'click' { [H]::SetCursorPos([int]$p[1], [int]$p[2]) | Out-Null; Start-Sleep -Milliseconds 60; Btn 2 4 }
+      'dclick' { [H]::SetCursorPos([int]$p[1], [int]$p[2]) | Out-Null; Start-Sleep -Milliseconds 60; Btn 2 4; Start-Sleep -Milliseconds 70; Btn 2 4 }
+      'rclick' { [H]::SetCursorPos([int]$p[1], [int]$p[2]) | Out-Null; Start-Sleep -Milliseconds 60; Btn 8 16 }
+      'scroll' { [H]::SetCursorPos([int]$p[1], [int]$p[2]) | Out-Null; Start-Sleep -Milliseconds 60; [H]::mouse_event(2048, 0, 0, [int]$p[3], $z) }
+      'drag' {
+        [H]::SetCursorPos([int]$p[1], [int]$p[2]) | Out-Null; Start-Sleep -Milliseconds 80
+        [H]::mouse_event(2, 0, 0, 0, $z)
+        for ($i = 1; $i -le 12; $i++) {
+          $x = [int]$p[1] + ([int]$p[3] - [int]$p[1]) * $i / 12; $y = [int]$p[2] + ([int]$p[4] - [int]$p[2]) * $i / 12
+          [H]::SetCursorPos([int]$x, [int]$y) | Out-Null; Start-Sleep -Milliseconds 25
+        }
+        [H]::mouse_event(4, 0, 0, 0, $z)
+      }
+      'keys' {
+        # vk:ext pairs, pressed in order and released in reverse (a combo like ctrl+shift+t)
+        $ks = $p[1].Split(',') | ForEach-Object { $a = $_.Split(':'); @{ vk = [byte][Convert]::ToInt32($a[0], 16); ext = [uint32]$a[1] } }
+        foreach ($k in $ks) { [H]::keybd_event($k.vk, 0, $k.ext, $z); Start-Sleep -Milliseconds 30 }
+        [array]::Reverse($ks)
+        foreach ($k in $ks) { [H]::keybd_event($k.vk, 0, ($k.ext -bor 2), $z); Start-Sleep -Milliseconds 20 }
+      }
+    }
+    [Console]::Out.WriteLine('OK')
+  } catch { [Console]::Out.WriteLine('ERR ' + $_.Exception.Message) }
+}
+`;
+let hands = null;
+let handsWaiting = [];
+
+function handsProc() {
+  if (hands) return hands;
+  const fs = require("fs");
+  const file = path.join(app.getPath("userData"), "cosmo-hands.ps1");
+  fs.writeFileSync(file, HANDS_PS1);
+  const { spawn } = require("child_process");
+  hands = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file], { windowsHide: true });
+  let buf = "";
+  hands.stdout.on("data", (d) => {
+    buf += d.toString();
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (line === "READY" || !line) continue;
+      const next = handsWaiting.shift();
+      if (next) next(line === "OK");
+    }
+  });
+  hands.on("exit", () => {
+    hands = null;
+    for (const w of handsWaiting) w(false);
+    handsWaiting = [];
+  });
+  return hands;
+}
+
+function handsSend(cmd) {
+  return new Promise((resolve) => {
+    const h = handsProc();
+    const t = setTimeout(() => resolve(false), 8000);
+    handsWaiting.push((ok) => {
+      clearTimeout(t);
+      resolve(ok);
+    });
+    h.stdin.write(cmd + "\n");
+  });
+}
+
+const VK = {
+  ctrl: 0x11, control: 0x11, shift: 0x10, alt: 0x12, win: 0x5b, windows: 0x5b, enter: 0x0d, intro: 0x0d, tab: 0x09,
+  esc: 0x1b, escape: 0x1b, backspace: 0x08, delete: 0x2e, supr: 0x2e, space: 0x20, espacio: 0x20,
+  up: 0x26, down: 0x28, left: 0x25, right: 0x27, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22,
+};
+const EXTENDED = new Set([0x2e, 0x26, 0x28, 0x25, 0x27, 0x24, 0x23, 0x21, 0x22, 0x5b]);
+
+/** "ctrl+shift+t" → "11:0,10:0,54:0" for the helper; null if a key is unknown. */
+function keyCombo(combo) {
+  const parts = String(combo).toLowerCase().split("+").map((k) => k.trim()).filter(Boolean);
+  const out = [];
+  for (const k of parts) {
+    let vk = VK[k];
+    if (vk === undefined && /^f([1-9]|1[0-2])$/.test(k)) vk = 0x6f + Number(k.slice(1));
+    if (vk === undefined && /^[a-z0-9]$/.test(k)) vk = k.toUpperCase().charCodeAt(0);
+    if (vk === undefined) return null;
+    out.push(`${vk.toString(16)}:${EXTENDED.has(vk) ? 1 : 0}`);
+  }
+  return out.length ? out.join(",") : null;
+}
+
+/** One action on Lucas's computer. x/y are 0–1000 over the main screen (as in the screenshot). */
+async function pcAction(a) {
+  if (process.platform !== "win32" || !a || typeof a !== "object") return false;
+  const d = screen.getPrimaryDisplay();
+  const px = (n, size, origin) => Math.round((origin + (Math.max(0, Math.min(1000, Number(n) || 0)) / 1000) * size) * d.scaleFactor);
+  const X = (n) => px(n, d.bounds.width, d.bounds.x);
+  const Y = (n) => px(n, d.bounds.height, d.bounds.y);
+  // Cosmo's window must never be the one that gets the keys.
+  if (win && win.isFocused()) win.blur();
+  switch (a.type) {
+    case "move": return handsSend(`move ${X(a.x)} ${Y(a.y)}`);
+    case "click": return handsSend(`click ${X(a.x)} ${Y(a.y)}`);
+    case "double_click": return handsSend(`dclick ${X(a.x)} ${Y(a.y)}`);
+    case "right_click": return handsSend(`rclick ${X(a.x)} ${Y(a.y)}`);
+    case "scroll": return handsSend(`scroll ${X(a.x ?? 500)} ${Y(a.y ?? 500)} ${Math.round(-(Number(a.amount) || 3) * 120) * (a.direction === "up" ? -1 : 1)}`);
+    case "drag": return handsSend(`drag ${X(a.x)} ${Y(a.y)} ${X(a.x2)} ${Y(a.y2)}`);
+    case "keys": {
+      const k = keyCombo(a.keys);
+      return k ? handsSend(`keys ${k}`) : false;
+    }
+    case "type": return write(String(a.text ?? "").slice(0, 8000), true);
+    default: return false;
+  }
+}
+
 /*
  * "Cosmo, hacé tal cosa": Windows' own speech recognizer (offline, free, built in) listens for the name
  * followed by anything, and hands the whole phrase (as WAV) to the page, which transcribes it properly.
@@ -304,6 +442,7 @@ app.whenReady().then(() => {
   ipcMain.on("cosmo-start", (e) => startCosmo((m) => !e.sender.isDestroyed() && e.sender.send("cosmo", m)));
   ipcMain.on("cosmo-stop", () => stopCosmo());
   ipcMain.handle("write", (_e, text, paste) => write(String(text).slice(0, 8000), !!paste));
+  ipcMain.handle("pc", (_e, a) => pcAction(a).catch(() => false));
   ipcMain.on("open-url", (_e, url) => {
     if (/^https?:\/\//i.test(String(url))) void shell.openExternal(String(url));
   });
@@ -314,4 +453,9 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", (e) => e.preventDefault());
-app.on("before-quit", () => stopCosmo());
+app.on("before-quit", () => {
+  stopCosmo();
+  try {
+    hands?.kill();
+  } catch {}
+});
