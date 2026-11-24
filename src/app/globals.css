@@ -367,6 +367,7 @@ html.compa-root, html.compa-root body{background:transparent !important;overflow
 .compa.below .compa-bubble::before{bottom:auto;top:-14px;border-width:0 10px 14px;border-bottom-color:#0b1118;border-top-color:transparent}
 .compa.below .compa-bubble::after{bottom:auto;top:-10px;border-width:0 8px 11px;border-bottom-color:#f4fbff;border-top-color:transparent}
 @keyframes compa-pop{from{opacity:0;transform:translateY(6px) scale(.96)}}
+.compa-hint{margin:0;font:500 11px var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:#5ad8ff;text-shadow:0 1px 3px #000}
 .compa-note{margin:0;max-width:260px;text-align:center;font-size:12px;color:#ffd38a;text-shadow:0 1px 3px #000}
 .compa-form{display:flex;gap:6px;background:#0b1118;border:1px solid #1a2630;border-radius:14px;padding:6px}
 .compa-form input{width:170px;background:transparent;border:0;color:#e9f6fb;font:14px var(--f-body);outline:none;padding:4px 6px}

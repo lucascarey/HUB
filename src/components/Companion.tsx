@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import CozmoFace from "./CozmoFace";
 import { desktop, useJarvis } from "@/lib/useJarvis";
-import { chirp } from "@/lib/droid";
 import { supabase } from "@/lib/supabase";
 import type { Emotion } from "@/lib/cozmo";
 
@@ -57,10 +56,7 @@ function Alive() {
   // While the mouse is over him he stays put, so he's easy to click.
   const hovered = useRef(false);
   // Dragging him with the mouse: where it started, and when he was last put somewhere (he stays there a while).
-  const drag = useRef<{ sx: number; sy: number; wx: number; wy: number; moved: boolean; trail: { x: number; y: number; t: number }[] } | null>(null);
-  // Zero gravity: his velocity (px/s), and until when a scripted move (show, sleep, hide) owns the window.
-  const vel = useRef({ x: 0, y: 0 });
-  const scriptedUntil = useRef(0);
+  const drag = useRef<{ sx: number; sy: number; wx: number; wy: number; moved: boolean } | null>(null);
   const headRef = useRef<HTMLButtonElement>(null);
   // Near the top of the screen the balloon goes under him instead of above.
   const [below, setBelow] = useState(false);
@@ -82,6 +78,7 @@ function Alive() {
   const placed = useRef({ x: NaN, y: NaN });
   const place = useCallback((x: number, y: number) => {
     const rx = Math.round(x), ry = Math.round(y);
+    if (!Number.isFinite(rx) || !Number.isFinite(ry)) return;
     if (rx === placed.current.x && ry === placed.current.y) return;
     placed.current = { x: rx, y: ry };
     if (d?.place) d.place(rx, ry);
@@ -91,8 +88,6 @@ function Alive() {
   const go = useCallback((x: number, y: number, ms = 900) => {
     if (hovered.current) return;
     pos.current = { x, y };
-    vel.current = { x: 0, y: 0 };
-    scriptedUntil.current = Date.now() + ms + 50;
     d?.moveTo(Math.round(x), Math.round(y), ms);
   }, [d]);
 
@@ -118,79 +113,17 @@ function Alive() {
     go(cx, cy, ms);
   }, [go]);
 
-  /*
-   * Zero gravity: he drifts slowly and keeps going, bounces off the screen edges, and if Lucas throws him
-   * he flies off, hits the edge and bounces back, slowly losing speed. He leans a little the way he's moving.
-   */
-  useEffect(() => {
-    if (!d) return;
-    let raf = 0;
-    let last = performance.now();
-    let wander = { x: rand(-1, 1), y: rand(-1, 1) };
-    let nextWander = 0;
-    let lastHit = 0;
-    const frame = (now: number) => {
-      raf = requestAnimationFrame(frame);
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      const a = area.current;
-      const head = headRef.current;
-      if (!a || !head || drag.current || moodRef.current !== "awake" || Date.now() < scriptedUntil.current) return;
-      if (hovered.current) return void (head.style.transform = "");
-      const v = vel.current;
-      const busy = phaseRef.current !== "idle";
-      const resting = Date.now() - placedAt.current < 60_000;
-      // Slow down: a little in space, a lot while he's talking (so the bubble can be read).
-      const damp = busy ? 2.5 : 0.35;
-      v.x *= Math.exp(-damp * dt);
-      v.y *= Math.exp(-damp * dt);
-      // His own gentle drift, changing direction now and then.
-      if (!busy && !resting) {
-        if (now > nextWander) {
-          const ang = Math.random() * Math.PI * 2;
-          wander = { x: Math.cos(ang), y: Math.sin(ang) * 0.7 };
-          nextWander = now + rand(8000, 20_000);
-        }
-        const target = 28;
-        if (Math.hypot(v.x, v.y) < target * 1.5) {
-          v.x += (wander.x * target - v.x) * 0.4 * dt;
-          v.y += (wander.y * target - v.y) * 0.4 * dt;
-        }
-      }
-      if (Math.hypot(v.x, v.y) < 0.5) return;
-      let x = pos.current.x + v.x * dt;
-      let y = pos.current.y + v.y * dt;
-      // Edges: where the head itself touches the screen border (the window is bigger than the head).
-      const r = head.getBoundingClientRect();
-      const minX = a.x - r.left, maxX = a.x + a.width - r.right;
-      const minY = a.y - r.top, maxY = a.y + a.height - r.bottom;
-      let hit = 0;
-      if (x < minX) { x = minX; hit = Math.max(hit, Math.abs(v.x)); v.x = Math.abs(v.x) * 0.75; wander.x = Math.abs(wander.x); }
-      if (x > maxX) { x = maxX; hit = Math.max(hit, Math.abs(v.x)); v.x = -Math.abs(v.x) * 0.75; wander.x = -Math.abs(wander.x); }
-      if (y < minY) { y = minY; hit = Math.max(hit, Math.abs(v.y)); v.y = Math.abs(v.y) * 0.75; wander.y = Math.abs(wander.y); }
-      if (y > maxY) { y = maxY; hit = Math.max(hit, Math.abs(v.y)); v.y = -Math.abs(v.y) * 0.75; wander.y = -Math.abs(wander.y); }
-      if (hit > 350 && now - lastHit > 250) {
-        lastHit = now;
-        head.classList.remove("bonk");
-        void head.offsetWidth;
-        head.classList.add("bonk");
-        chirp("x".repeat(hit > 1200 ? 50 : 20), hit > 1200 ? "alert" : "normal", 3);
-        setFlash(hit > 1200 ? "enojado" : "asombrado");
-        setTimeout(() => setFlash(null), 1400);
-      }
-      pos.current = { x, y };
-      place(x, y);
-      const nearTop = y + r.top < a.y + 170;
-      if (nearTop !== belowRef.current && (nearTop || y + r.top > a.y + 230)) {
-        belowRef.current = nearTop;
-        headTopBefore.current = r.top;
-        setBelow(nearTop);
-      }
-      head.style.transform = `rotate(${Math.max(-14, Math.min(14, v.x * 0.012))}deg)`;
-    };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, [d, place]);
+  /** Near the top of the screen the balloon goes under him instead of above (checked after he's moved). */
+  const checkBelow = useCallback(() => {
+    const a = area.current, head = headRef.current;
+    if (!a || !head) return;
+    const top = pos.current.y + head.getBoundingClientRect().top;
+    const nearTop = top < a.y + 170;
+    if (nearTop === belowRef.current || (!nearTop && top < a.y + 230)) return;
+    belowRef.current = nearTop;
+    headTopBefore.current = head.getBoundingClientRect().top;
+    setBelow(nearTop);
+  }, []);
 
   // When the balloon flips, the head moves inside the window: move the window the other way so he stays put.
   useLayoutEffect(() => {
@@ -258,7 +191,7 @@ function Alive() {
   // Speech bubble: what he hears, then what he says, for a few seconds.
   useEffect(() => {
     if (jarvis.interim) return setBubble(jarvis.interim);
-    if (phase === "thinking") return setBubble("…");
+    if (phase === "thinking") return setBubble("Pensando…");
     if (phase === "speaking" && jarvis.lastReply) return setBubble(jarvis.lastReply);
     if (phase === "idle") {
       // Long enough to read it.
@@ -373,9 +306,10 @@ function Alive() {
         }}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
-          drag.current = { sx: e.screenX, sy: e.screenY, wx: pos.current.x, wy: pos.current.y, moved: false, trail: [] };
-          vel.current = { x: 0, y: 0 };
-          e.currentTarget.setPointerCapture(e.pointerId);
+          drag.current = { sx: e.screenX, sy: e.screenY, wx: pos.current.x, wy: pos.current.y, moved: false };
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {}
         }}
         onPointerMove={(e) => {
           const g = drag.current;
@@ -383,27 +317,22 @@ function Alive() {
           const dx = e.screenX - g.sx, dy = e.screenY - g.sy;
           if (!g.moved && Math.hypot(dx, dy) < 6) return;
           g.moved = true;
-          g.trail = [...g.trail.filter((p) => e.timeStamp - p.t < 120), { x: e.screenX, y: e.screenY, t: e.timeStamp }];
           pos.current = { x: g.wx + dx, y: g.wy + dy };
           place(g.wx + dx, g.wy + dy);
         }}
         onPointerUp={(e) => {
           const g = drag.current;
           drag.current = null;
-          e.currentTarget.releasePointerCapture?.(e.pointerId);
+          try {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+          } catch {}
           if (!e.currentTarget.matches(":hover")) {
             hovered.current = false;
             d?.setClickable(false);
           }
           if (g?.moved) {
-            // Thrown: the speed of the last ~0.1 s of the drag carries on.
-            const first = g.trail[0], end = g.trail[g.trail.length - 1];
-            const span = first && end ? (end.t - first.t) / 1000 : 0;
-            if (span > 0.015 && e.timeStamp - end.t < 80) {
-              const k = Math.min(1, 4000 / Math.max(1, Math.hypot(end.x - first.x, end.y - first.y) / span));
-              vel.current = { x: ((end.x - first.x) / span) * k, y: ((end.y - first.y) / span) * k };
-            }
             skipClick.current = true;
+            checkBelow();
             placedAt.current = Date.now();
             lastActive.current = Date.now();
           }
@@ -426,6 +355,7 @@ function Alive() {
       >
         <CozmoFace emotion={shown} mode={mood === "asleep" ? "idle" : phase} size={170} square gaze={gaze} />
       </button>
+      {phase === "listening" && mood === "awake" && <p className="compa-hint">te escucho</p>}
       {jarvis.note && <p className="compa-note">{jarvis.note}</p>}
     </div>
   );
