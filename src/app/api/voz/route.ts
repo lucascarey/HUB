@@ -1,5 +1,6 @@
 import { ApiError, GoogleGenAI } from "@google/genai";
 import { userFromRequest } from "@/lib/gmail-server";
+import { edgeSpeak } from "@/lib/edge-voice";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -28,7 +29,7 @@ function wav(pcm: Buffer) {
   return Buffer.concat([h, pcm]);
 }
 
-/** Jarvis's human voice: Gemini text-to-speech, rioplatense Spanish. The app falls back to the browser voice on any error. */
+/** Jarvis's human voice: Microsoft's Tomás (es-AR), then Gemini text-to-speech. The app falls back to the browser voice on any error. */
 export async function POST(req: Request) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return Response.json({ error: "not_configured" }, { status: 503 });
@@ -40,6 +41,15 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as { text?: string } | null;
   const text = body?.text?.trim().slice(0, 900);
   if (!text) return Response.json({ error: "bad_request" }, { status: 400 });
+
+  // First choice: Tomás, Microsoft's Argentine neural voice (free, no daily limit).
+  try {
+    const mp3 = await edgeSpeak(text);
+    if (mp3.length > 1000)
+      return new Response(new Uint8Array(mp3), { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
+  } catch (e) {
+    console.warn("voz edge", String(e).slice(0, 200));
+  }
 
   const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
   const prompt = `Decilo en español rioplatense de Buenos Aires, con voz cálida, natural y un poco canchera, a ritmo de charla:\n${text}`;

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isEmotion, type Emotion } from "./cozmo";
 import { supabase } from "./supabase";
+import { recordPhrase, stopRecording } from "./recorder";
 import { startWakeWord, stopWakeWord } from "./wakeword";
 
 export type Turn = { role: "user" | "assistant"; text: string };
@@ -16,8 +17,22 @@ interface SR {
   onresult: ((e: SREvent) => void) | null; onend: (() => void) | null; onerror: ((e: { error: string }) => void) | null;
   start(): void; stop(): void; abort(): void;
 }
+/** Bridge the Windows desktop app exposes (desktop/preload.cjs). */
+export interface DesktopBridge {
+  speak(text: string): Promise<ArrayBuffer | null>;
+  moveTo(x: number, y: number, ms?: number): void;
+  workArea(): Promise<{ x: number; y: number; width: number; height: number; winW: number; winH: number }>;
+  setClickable(on: boolean): void;
+  openHub(path?: string): void;
+  hide(): void;
+}
+export const desktop = (): DesktopBridge | null =>
+  typeof window === "undefined" ? null : ((window as unknown as { jarvisDesktop?: DesktopBridge }).jarvisDesktop ?? null);
+
 const getSR = (): (new () => SR) | null => {
   if (typeof window === "undefined") return null;
+  // Electron has the API but no Google key behind it: record and transcribe with Gemini instead.
+  if (desktop()) return null;
   const w = window as unknown as { SpeechRecognition?: new () => SR; webkitSpeechRecognition?: new () => SR };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 };
@@ -65,9 +80,39 @@ function stopSpeaking() {
   window.speechSynthesis?.cancel();
 }
 
-/** Speaks with Gemini's human voice, or the browser's voice if that isn't available. */
+async function play(blob: Blob, onEnd: () => void) {
+  const url = URL.createObjectURL(blob);
+  const a = new Audio(url);
+  playing = a;
+  const done = () => {
+    URL.revokeObjectURL(url);
+    if (playing === a) {
+      playing = null;
+      onEnd();
+    }
+  };
+  a.onended = done;
+  a.onerror = done;
+  try {
+    await a.play();
+    return true;
+  } catch {
+    playing = null;
+    URL.revokeObjectURL(url);
+    return false;
+  }
+}
+
+/** Speaks with the desktop app's voice or Jarvis's human voice, or the browser's voice if that isn't available. */
 async function speak(text: string, onEnd: () => void) {
   stopSpeaking();
+  const d = desktop();
+  if (d) {
+    try {
+      const mp3 = await d.speak(text);
+      if (mp3 && mp3.byteLength > 1000 && (await play(new Blob([mp3], { type: "audio/mpeg" }), onEnd))) return;
+    } catch {}
+  }
   const t = humanVoiceOff ? null : await token();
   if (t) {
     try {
@@ -76,22 +121,7 @@ async function speak(text: string, onEnd: () => void) {
         headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
         body: JSON.stringify({ text }),
       });
-      if (res.ok) {
-        const url = URL.createObjectURL(await res.blob());
-        const a = new Audio(url);
-        playing = a;
-        const done = () => {
-          URL.revokeObjectURL(url);
-          if (playing === a) {
-            playing = null;
-            onEnd();
-          }
-        };
-        a.onended = done;
-        a.onerror = done;
-        await a.play();
-        return;
-      }
+      if (res.ok && (await play(await res.blob(), onEnd))) return;
       if (res.status === 429 || res.status === 503) humanVoiceOff = true;
     } catch {
       // Autoplay blocked or no connection: fall back below.
@@ -133,7 +163,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   };
 
   useEffect(() => {
-    setSupported(!!getSR());
+    setSupported(!!getSR() || !!navigator.mediaDevices?.getUserMedia);
     const t = readTurns();
     turnsRef.current = t;
     setTurns(t);
@@ -155,6 +185,37 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   };
 
   // Hands-free listening restarts itself after every phrase while the mode is on.
+  // Without a speech recognizer: record one phrase, transcribe it with Gemini, then ask.
+  const listenByRecording = async () => {
+    if (phaseRef.current === "listening") return;
+    setP("listening");
+    setInterim("Te escucho…");
+    let said = "";
+    try {
+      const wav = await recordPhrase();
+      if (wav) {
+        setInterim("…");
+        const t = await token();
+        const res = await fetch("/api/escuchar", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+          body: JSON.stringify({ audio: wav }),
+        });
+        said = ((await res.json().catch(() => ({}))).text ?? "").trim();
+      }
+    } catch (e) {
+      console.error("listen", e);
+      setNote("No pude usar el micrófono.");
+    }
+    setInterim("");
+    if (said) return void askRef.current(said);
+    setP("idle");
+    if (wakeRef.current) startListeningRef.current("wake");
+  };
+  const startListeningRef = useRef<(m: "command" | "wake") => void>(() => {});
+  const listenRef = useRef(listenByRecording);
+  listenRef.current = listenByRecording;
+
   const startListening = useCallback((mode: "command" | "wake") => {
     // Hands-free with the on-device "Jarvis" detector (works with the tab in the background).
     if (mode === "wake" && !wakeWordFailed.current) {
@@ -173,7 +234,10 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     }
     if (mode === "command") void stopWakeWord();
     const SRC = getSR();
-    if (!SRC) return;
+    if (!SRC) {
+      if (mode === "command") void listenRef.current();
+      return;
+    }
     rec.current?.abort();
     const r = new SRC();
     r.lang = "es-AR";
@@ -247,6 +311,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       rec.current = null;
     }
   }, []);
+  startListeningRef.current = startListening;
 
   const ask = async (q: string) => {
     const question = q.trim();
@@ -300,6 +365,23 @@ export function useJarvis({ signedIn, onChanged }: Options) {
 
   askRef.current = ask;
 
+  /** Jarvis speaks on his own (a reminder, a greeting), without a question from Lucas. */
+  const say = (text: string, mood: Emotion = "normal") => {
+    if (phaseRef.current !== "idle") return false;
+    void stopWakeWord();
+    setEmotion(mood);
+    push({ role: "assistant", text });
+    const resume = () => {
+      setP("idle");
+      if (wakeRef.current) startListening("wake");
+    };
+    if (voice) {
+      setP("speaking");
+      void speak(text, resume);
+    } else resume();
+    return true;
+  };
+
   const toggleWake = () => {
     const on = !wake;
     setWake(on);
@@ -335,6 +417,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     }
     if (phase === "listening") {
       rec.current?.stop();
+      stopRecording();
       return;
     }
     if (phase === "thinking") return;
@@ -354,6 +437,6 @@ export function useJarvis({ signedIn, onChanged }: Options) {
 
   return {
     open, setOpen, turns, phase, interim, voice, setVoice, wake, toggleWake, note, supported,
-    emotion, changes, lastReply, ask, mic, clear,
+    emotion, setEmotion, changes, lastReply, ask, say, mic, clear,
   };
 }
