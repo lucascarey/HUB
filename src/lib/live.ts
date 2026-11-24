@@ -5,6 +5,7 @@
  */
 import { GoogleGenAI, type LiveServerMessage, type Session } from "@google/genai";
 import { ensureRunning } from "./audio-unlock";
+import { chirp, hush as hushChirps } from "./droid";
 
 const IN_RATE = 16000;
 const OUT_RATE = 24000;
@@ -33,6 +34,8 @@ export type LiveState = "connecting" | "listening" | "thinking" | "speaking";
 export interface LiveHooks {
   bearer: string;
   desktop: boolean;
+  /** Droid mode: beeps instead of his voice (the words show in the bubble from the transcript). */
+  droid?: boolean;
   onState(s: LiveState): void;
   /** Running transcript: what Lucas said and what Cosmo said (each turn as it grows). */
   onTurn(role: "user" | "assistant", text: string, done: boolean): void;
@@ -85,6 +88,9 @@ export class LiveChat {
   private toolsBusy = 0;
   /** Why the last start() failed, for diagnostics. */
   lastError = "";
+  /** Microphone stats for diagnostics: chunks sent and the loudest sample (0..1). */
+  micChunks = 0;
+  micPeak = 0;
 
   constructor(private hooks: LiveHooks) {}
 
@@ -193,7 +199,14 @@ export class LiveChat {
     await this.inCtx.audioWorklet.addModule(url);
     URL.revokeObjectURL(url);
     const node = new AudioWorkletNode(this.inCtx, "live-mic");
-    node.port.onmessage = (e: MessageEvent<Int16Array>) => this.sendAudio(new Uint8Array(e.data.buffer));
+    node.port.onmessage = (e: MessageEvent<Int16Array>) => {
+      const d = e.data;
+      let peak = 0;
+      for (let i = 0; i < d.length; i += 8) peak = Math.max(peak, Math.abs(d[i]));
+      this.micChunks++;
+      this.micPeak = Math.max(this.micPeak, peak / 32768);
+      this.sendAudio(new Uint8Array(d.buffer));
+    };
     this.inCtx.createMediaStreamSource(this.media).connect(node);
     this.outCtx = new AudioContext({ sampleRate: OUT_RATE });
     void ensureRunning(this.outCtx);
@@ -208,6 +221,19 @@ export class LiveChat {
     if (!ctx) return;
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+    if (this.hooks.droid) {
+      // No voice: a few beeps when he starts talking, and he "talks" (for the idle/interrupt logic) as long as the voice would.
+      if (this.playAt < ctx.currentTime + 0.02) {
+        this.playAt = ctx.currentTime + Math.max(chirp("x".repeat(90)), 0.3);
+      }
+      this.playAt += pcm.length / OUT_RATE;
+      const left = (this.playAt - ctx.currentTime) * 1000 + 50;
+      setTimeout(() => {
+        if (!this.isPlaying() && !this.ended) this.hooks.onState(this.toolsBusy ? "thinking" : "listening");
+      }, left);
+      this.hooks.onState("speaking");
+      return;
+    }
     const buf = ctx.createBuffer(1, pcm.length, OUT_RATE);
     const ch = buf.getChannelData(0);
     for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
@@ -228,6 +254,7 @@ export class LiveChat {
   }
 
   private hush() {
+    hushChirps();
     for (const p of this.playing) p.stop();
     this.playing = [];
     this.playAt = 0;

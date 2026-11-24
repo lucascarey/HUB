@@ -348,10 +348,12 @@ html.compa-root, html.compa-root body{background:transparent !important;overflow
   inset 0 0 0 3px #0a1016, inset 0 0 0 4px rgba(90,216,255,.35)}
 @media (prefers-reduced-motion:reduce){.compa-head{animation:none}}
 .compa-head.static{cursor:default}
+.compa-head{touch-action:none}
+.compa-head:active{cursor:grabbing}
 .compa.asleep .compa-head{box-shadow:0 10px 30px -8px rgba(0,0,0,.6);filter:saturate(.7) brightness(.85)}
 .compa-bubble{margin:0;max-width:260px;background:#0b1118;color:#e9f6fb;border:1px solid color-mix(in srgb, var(--face) 35%, #1a2630);
   border-radius:16px 16px 16px 4px;padding:8px 12px;font-size:13.5px;line-height:1.35;box-shadow:0 8px 24px -10px rgba(0,0,0,.7);
-  display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;animation:compa-pop .25s ease}
+  display:-webkit-box;-webkit-line-clamp:9;-webkit-box-orient:vertical;overflow:hidden;animation:compa-pop .25s ease}
 @keyframes compa-pop{from{opacity:0;transform:translateY(6px) scale(.96)}}
 .compa-note{margin:0;max-width:260px;text-align:center;font-size:12px;color:#ffd38a;text-shadow:0 1px 3px #000}
 .compa-form{display:flex;gap:6px;background:#0b1118;border:1px solid #1a2630;border-radius:14px;padding:6px}

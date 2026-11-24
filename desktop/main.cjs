@@ -8,7 +8,7 @@ const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const HUB = process.env.JARVIS_HUB_URL || "https://hub-sigma-beige.vercel.app";
 const VOICE = process.env.JARVIS_VOICE || "es-AR-TomasNeural";
 const WIN_W = 300;
-const WIN_H = 260;
+const WIN_H = 340;
 
 let win = null;
 let tray = null;
@@ -175,10 +175,10 @@ $eng.EndSilenceTimeoutAmbiguous = [TimeSpan]::FromMilliseconds(1200)
 [Console]::Out.WriteLine('READY ' + $info.Culture.Name)
 while ($true) {
   $r = $eng.Recognize([TimeSpan]::FromSeconds(30))
-  if (-not $r) { continue }
+  if (-not $r) { [Console]::Out.WriteLine('LEVEL ' + $eng.AudioLevel + ' ' + $eng.AudioState); continue }
   $first = $r.Words | Select-Object -First 1
   $conf = if ($first) { $first.Confidence } else { $r.Confidence }
-  if ($conf -lt $env:COSMO_MIN) { continue }
+  if ($conf -lt $env:COSMO_MIN) { [Console]::Out.WriteLine('LOW ' + [Math]::Round($conf, 2) + ' ' + $r.Text); continue }
   $wav = ''
   if ($r.Grammar.Name -eq 'cmd' -and $r.Audio) {
     $ms = New-Object IO.MemoryStream
@@ -201,7 +201,7 @@ function startCosmo(send) {
   const child = execFile(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
-    { windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, COSMO_MIN: process.env.COSMO_MIN || "0.55" } },
+    { windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, COSMO_MIN: process.env.COSMO_MIN || "0.4" } },
   );
   cosmo = child;
   let buf = "";
@@ -219,6 +219,7 @@ function startCosmo(send) {
         const [, grammar, conf, wav] = line.split(" ");
         send({ type: "heard", only: grammar !== "cmd" || !wav, confidence: Number(conf), wav: wav || null });
       } else if (line.startsWith("ERR")) send({ type: "error", reason: line.slice(4) });
+      else if (line.startsWith("LOW") || line.startsWith("LEVEL")) send({ type: "debug", line: line.slice(0, 200) });
     }
   });
   child.stderr.on("data", (d) => console.error("cosmo", String(d).slice(0, 300)));

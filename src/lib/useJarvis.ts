@@ -6,6 +6,7 @@ import { supabase } from "./supabase";
 import { recordPhrase, stopRecording } from "./recorder";
 import { startWakeWord, stopWakeWord } from "./wakeword";
 import { LiveChat } from "./live";
+import { chirp, hush as hushChirps, moodFor } from "./droid";
 
 export type Turn = { role: "user" | "assistant"; text: string };
 export type Phase = "idle" | "listening" | "thinking" | "speaking";
@@ -40,7 +41,8 @@ export interface DesktopBridge {
 export type CosmoEvent =
   | { type: "ready"; culture: string }
   | { type: "heard"; only: boolean; confidence: number; wav: string | null }
-  | { type: "error"; reason: string };
+  | { type: "error"; reason: string }
+  | { type: "debug"; line: string };
 
 /** "Cosmo, poneme una alarma" → "poneme una alarma". */
 const stripName = (s: string) => s.replace(/^\s*(hey\s+|che\s+)?(cosmo|kosmo|cosmos|cozmo)\b[\s,.:;!¡?¿-]*/i, "").trim();
@@ -119,7 +121,12 @@ let playing: HTMLAudioElement | null = null;
 // After Gemini's voice hits its free daily limit, use the browser voice until the page reloads.
 let humanVoiceOff = false;
 
+let droidTimer: ReturnType<typeof setTimeout> | null = null;
+
 function stopSpeaking() {
+  hushChirps();
+  if (droidTimer) clearTimeout(droidTimer);
+  droidTimer = null;
   playing?.pause();
   playing = null;
   window.speechSynthesis?.cancel();
@@ -149,14 +156,14 @@ async function play(blob: Blob, onEnd: () => void) {
 }
 
 /** Speaks with the desktop app's voice or Jarvis's human voice, or the browser's voice if that isn't available. */
-async function speak(text: string, onEnd: () => void) {
+async function speak(text: string, onEnd: () => void, emotion = "normal") {
   stopSpeaking();
   const d = desktop();
   if (d) {
-    try {
-      const mp3 = await d.speak(text);
-      if (mp3 && mp3.byteLength > 1000 && (await play(new Blob([mp3], { type: "audio/mpeg" }), onEnd))) return;
-    } catch {}
+    // On the desktop Cosmo doesn't talk: he beeps like a droid and the words show in his bubble.
+    const secs = chirp(text, moodFor(emotion, text));
+    droidTimer = setTimeout(onEnd, Math.max(600, secs * 1000 + 300));
+    return;
   }
   const t = humanVoiceOff ? null : await token();
   if (t) {
@@ -201,6 +208,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   const wakeWordFailed = useRef(false);
   const cosmoFailed = useRef(false);
   const cosmoOff = useRef<(() => void) | null>(null);
+  const cosmoDebug = useRef(0);
   const onCosmoRef = useRef<(m: CosmoEvent) => void>(() => {});
   // Speech callbacks outlive renders: they call the latest ask() through this ref.
   const askRef = useRef<(q: string) => Promise<void>>(async () => {});
@@ -321,6 +329,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     const chat = new LiveChat({
       bearer,
       desktop: true,
+      droid: true,
       onState: (s) => {
         if (live.current !== chat) return;
         setP(s === "connecting" ? "thinking" : s);
@@ -331,7 +340,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       runTool: liveTool,
       onEnd: (reason) => {
         if (live.current !== chat) return;
-        diag("live-end", { reason, err: chat.lastError });
+        diag("live-end", { reason, err: chat.lastError, micChunks: chat.micChunks, micPeak: Math.round(chat.micPeak * 1000) / 1000 });
         live.current = null;
         setInterim("");
         setP("idle");
@@ -509,6 +518,11 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   startListeningRef.current = startListening;
 
   onCosmoRef.current = (m: CosmoEvent) => {
+    if (m.type === "debug") {
+      // Recognizer chatter (low-confidence hits, mic level): only the first few, enough to diagnose.
+      if (cosmoDebug.current++ < 12) diag("cosmo-debug", m.line);
+      return;
+    }
     diag(`cosmo-${m.type}`, m.type === "heard" ? { only: m.only, conf: m.confidence, wav: m.wav?.length ?? 0, phase: phaseRef.current, wake: wakeRef.current } : m);
     if (m.type === "error") {
       console.warn("cosmo", m.reason);
@@ -555,6 +569,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     push({ role: "user", text: question });
     setP("thinking");
     let reply = "";
+    let mood = "normal";
     try {
       const t = await token();
       const d = desktop();
@@ -572,7 +587,8 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       }
       if (json.text) {
         reply = json.text;
-        setEmotion(typeof json.emotion === "string" && isEmotion(json.emotion) ? json.emotion : "normal");
+        mood = typeof json.emotion === "string" && isEmotion(json.emotion) ? json.emotion : "normal";
+        setEmotion(mood as Emotion);
         if (json.changed?.hub) onChanged();
         if (json.changed?.hub || json.changed?.memory || json.changed?.calendar) setChanges((c) => c + 1);
       } else {
@@ -596,7 +612,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     };
     if (voice) {
       setP("speaking");
-      void speak(reply, resume);
+      void speak(reply, resume, mood);
     } else resume();
   };
 
@@ -614,7 +630,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     };
     if (voice) {
       setP("speaking");
-      void speak(text, resume);
+      void speak(text, resume, mood);
     } else resume();
     return true;
   };

@@ -55,6 +55,10 @@ function Alive() {
   const pos = useRef({ x: 0, y: 0 });
   // While the mouse is over him he stays put, so he's easy to click.
   const hovered = useRef(false);
+  // Dragging him with the mouse: where it started, and when he was last put somewhere (he stays there a while).
+  const drag = useRef<{ sx: number; sy: number; wx: number; wy: number; moved: boolean } | null>(null);
+  const skipClick = useRef(false);
+  const placedAt = useRef(0);
   const d = desktop();
 
   // Hands-free is the point of the companion: turn it on once.
@@ -149,7 +153,8 @@ function Alive() {
     if (phase === "thinking") return setBubble("…");
     if (phase === "speaking" && jarvis.lastReply) return setBubble(jarvis.lastReply);
     if (phase === "idle") {
-      const t = setTimeout(() => setBubble(""), 6000);
+      // Long enough to read it.
+      const t = setTimeout(() => setBubble(""), Math.min(25_000, Math.max(6000, 2500 + (jarvis.lastReply?.length ?? 0) * 70)));
       return () => clearTimeout(t);
     }
   }, [jarvis.interim, phase, jarvis.lastReply]);
@@ -168,6 +173,8 @@ function Alive() {
         return;
       }
       if (moodRef.current !== "awake") return;
+      // Lucas put him somewhere: he stays there for a few minutes.
+      if (Date.now() - placedAt.current < 4 * 60_000) return;
       const a = area.current;
       const act = pick(["float", "float", "glance", "glance", "peek", "yawn", "stay", "stay"]);
       // A gentle drift from where he is, not a jump across the screen.
@@ -254,10 +261,41 @@ function Alive() {
           d?.setClickable(true);
         }}
         onMouseLeave={() => {
+          // While dragging the pointer can slip off the head for a moment: keep the window catching it.
+          if (drag.current) return;
           hovered.current = false;
           d?.setClickable(false);
         }}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          drag.current = { sx: e.screenX, sy: e.screenY, wx: pos.current.x, wy: pos.current.y, moved: false };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          const g = drag.current;
+          if (!g || !(e.buttons & 1)) return;
+          const dx = e.screenX - g.sx, dy = e.screenY - g.sy;
+          if (!g.moved && Math.hypot(dx, dy) < 6) return;
+          g.moved = true;
+          pos.current = { x: g.wx + dx, y: g.wy + dy };
+          d?.moveTo(Math.round(g.wx + dx), Math.round(g.wy + dy), 0);
+        }}
+        onPointerUp={(e) => {
+          const g = drag.current;
+          drag.current = null;
+          e.currentTarget.releasePointerCapture?.(e.pointerId);
+          if (!e.currentTarget.matches(":hover")) {
+            hovered.current = false;
+            d?.setClickable(false);
+          }
+          if (g?.moved) {
+            skipClick.current = true;
+            placedAt.current = Date.now();
+            lastActive.current = Date.now();
+          }
+        }}
         onClick={() => {
+          if (skipClick.current) return void (skipClick.current = false);
           wakeUp();
           jarvis.mic();
         }}
@@ -270,7 +308,7 @@ function Alive() {
           e.preventDefault();
           d?.openHub();
         }}
-        title="Clic: hablar · Doble clic: esconderme · Clic derecho: abrir el HUB"
+        title="Clic: hablar · Arrastrar: moverme · Doble clic: esconderme · Clic derecho: abrir el HUB"
       >
         <CozmoFace emotion={shown} mode={mood === "asleep" ? "idle" : phase} size={170} square gaze={gaze} />
       </button>
