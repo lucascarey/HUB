@@ -9,7 +9,7 @@ const MODELS = [process.env.GEMINI_MODEL || "gemini-flash-latest", "gemini-2.5-f
 const PER_TRY_MS = 8000;
 const BUDGET_MS = 25_000;
 const PROMPT =
-  "Transcribí exactamente lo que dice la persona en este audio (español rioplatense). Respondé solo con el texto, sin comillas ni comentarios. Si no se entiende nada o no habla nadie, respondé vacío.";
+  "Transcribí exactamente lo que dice la persona en este audio (español rioplatense). Puede empezar llamando al asistente por su nombre, \"Cosmo\". Respondé solo con el texto, sin comillas ni comentarios. Si no se entiende nada o no habla nadie, respondé vacío.";
 
 /**
  * Speech to text with Gemini, for places without the browser's recognizer (the desktop app).
@@ -25,7 +25,7 @@ export async function POST(req: Request) {
 
   const body = (await req.json().catch(() => null)) as { audio?: string } | null;
   const audio = body?.audio;
-  if (!audio || audio.length > 2_500_000) return Response.json({ error: "bad_request" }, { status: 400 });
+  if (!audio || audio.length > 4_000_000) return Response.json({ error: "bad_request" }, { status: 400 });
 
   const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
   const start = Date.now();

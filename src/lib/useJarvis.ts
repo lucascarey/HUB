@@ -31,7 +31,16 @@ export interface DesktopBridge {
   write?(text: string, paste: boolean): Promise<boolean>;
   /** Opens a link in the normal browser; missing before 0.1.4. */
   openUrl?(url: string): void;
+  /** Listens for "Cosmo, …" with Windows' speech recognizer; returns the stop function. Missing before 0.1.5. */
+  onCosmo?(cb: (m: CosmoEvent) => void): () => void;
 }
+export type CosmoEvent =
+  | { type: "ready"; culture: string }
+  | { type: "heard"; only: boolean; confidence: number; wav: string | null }
+  | { type: "error"; reason: string };
+
+/** "Cosmo, poneme una alarma" → "poneme una alarma". */
+const stripName = (s: string) => s.replace(/^\s*(hey\s+|che\s+)?(cosmo|kosmo|cosmos|cozmo)\b[\s,.:;!¡?¿-]*/i, "").trim();
 
 /** Questions about what Lucas has in front of him: those go with a screenshot in the desktop app. */
 const SCREEN_RE = new RegExp(
@@ -173,6 +182,9 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   const turnsRef = useRef<Turn[]>([]);
   const awaitingCommand = useRef(false);
   const wakeWordFailed = useRef(false);
+  const cosmoFailed = useRef(false);
+  const cosmoOff = useRef<(() => void) | null>(null);
+  const onCosmoRef = useRef<(m: CosmoEvent) => void>(() => {});
   // Speech callbacks outlive renders: they call the latest ask() through this ref.
   const askRef = useRef<(q: string) => Promise<void>>(async () => {});
 
@@ -205,6 +217,19 @@ export function useJarvis({ signedIn, onChanged }: Options) {
 
   // Hands-free listening restarts itself after every phrase while the mode is on.
   // Without a speech recognizer: record one phrase, transcribe it with Gemini, then ask.
+  /** WAV (base64) → text with Gemini; "" when nothing was understood (and a note says why). */
+  const transcribe = async (wav: string) => {
+    const t = await token();
+    const res = await fetch("/api/escuchar", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+      body: JSON.stringify({ audio: wav }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) setNote(json.error === "busy" ? "Gemini está saturado y no te pude entender. Probá de nuevo en un ratito." : "No te pude entender. Probá de nuevo.");
+    return String(json.text ?? "").trim();
+  };
+
   const listenByRecording = async () => {
     if (phaseRef.current === "listening") return;
     setP("listening");
@@ -214,15 +239,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       const wav = await recordPhrase();
       if (wav) {
         setInterim("…");
-        const t = await token();
-        const res = await fetch("/api/escuchar", {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
-          body: JSON.stringify({ audio: wav }),
-        });
-        const json = await res.json().catch(() => ({}));
-        said = (json.text ?? "").trim();
-        if (!res.ok) setNote(json.error === "busy" ? "Gemini está saturado y no te pude entender. Probá de nuevo en un ratito." : "No te pude entender. Probá de nuevo.");
+        said = stripName(await transcribe(wav));
       }
     } catch (e) {
       console.error("listen", e);
@@ -238,6 +255,12 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   listenRef.current = listenByRecording;
 
   const startListening = useCallback((mode: "command" | "wake") => {
+    // In the Windows app: "Cosmo, …" through Windows' own recognizer, said in one go.
+    const d = desktop();
+    if (mode === "wake" && d?.onCosmo && !cosmoFailed.current) {
+      cosmoOff.current ??= d.onCosmo((m) => onCosmoRef.current(m));
+      return;
+    }
     // Hands-free with the on-device "Jarvis" detector (works with the tab in the background).
     if (mode === "wake" && !wakeWordFailed.current) {
       startWakeWord(() => {
@@ -342,6 +365,35 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   }, []);
   startListeningRef.current = startListening;
 
+  onCosmoRef.current = (m: CosmoEvent) => {
+    if (m.type === "error") {
+      console.warn("cosmo", m.reason);
+      cosmoFailed.current = true;
+      cosmoOff.current?.();
+      cosmoOff.current = null;
+      setNote("No pude activar “Cosmo” en Windows. Mientras, decime “Hey Jarvis”.");
+      if (wakeRef.current && phaseRef.current === "idle") startListening("wake");
+      return;
+    }
+    if (m.type !== "heard" || !wakeRef.current || phaseRef.current !== "idle") return;
+    setEmotion("sorprendido");
+    if (m.only || !m.wav) return startListening("command");
+    const wav = m.wav;
+    setP("thinking");
+    setInterim("…");
+    void transcribe(wav).then((text) => {
+      setInterim("");
+      const said = stripName(text);
+      if (said) return askRef.current(said);
+      // Only the name came through: listen for what comes next.
+      setP("idle");
+      startListening("command");
+    }, () => {
+      setInterim("");
+      setP("idle");
+    });
+  };
+
   const ask = async (q: string) => {
     const question = q.trim();
     if (!question) return;
@@ -432,6 +484,8 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     if (!wakeRef.current) {
       if (rec.current?.continuous) rec.current.abort();
       void stopWakeWord();
+      cosmoOff.current?.();
+      cosmoOff.current = null;
       return;
     }
     if (!rec.current && phaseRef.current === "idle") startListening("wake");

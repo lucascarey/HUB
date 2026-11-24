@@ -140,6 +140,103 @@ async function write(text, paste) {
   });
 }
 
+/*
+ * "Cosmo, hacé tal cosa": Windows' own speech recognizer (offline, free, built in) listens for the name
+ * followed by anything, and hands the whole phrase (as WAV) to the page, which transcribes it properly.
+ */
+const COSMO_PS1 = String.raw`
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Speech
+$recs = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers()
+$info = $recs | Where-Object { $_.Culture.Name -like 'es*' } | Select-Object -First 1
+if (-not $info) { $info = $recs | Where-Object { $_.Culture.Name -like 'en*' } | Select-Object -First 1 }
+if (-not $info) { $info = $recs | Select-Object -First 1 }
+if (-not $info) { [Console]::Out.WriteLine('ERR norecognizer'); exit 2 }
+$eng = New-Object System.Speech.Recognition.SpeechRecognitionEngine($info)
+$names = New-Object System.Speech.Recognition.Choices
+$names.Add([string[]]@('Cosmo', 'Kosmo', 'Cosmos'))
+$withCmd = New-Object System.Speech.Recognition.GrammarBuilder
+$withCmd.Culture = $info.Culture
+$withCmd.Append($names)
+$withCmd.AppendWildcard()
+$g1 = New-Object System.Speech.Recognition.Grammar($withCmd)
+$g1.Name = 'cmd'
+$alone = New-Object System.Speech.Recognition.GrammarBuilder
+$alone.Culture = $info.Culture
+$alone.Append($names)
+$g2 = New-Object System.Speech.Recognition.Grammar($alone)
+$g2.Name = 'name'
+$eng.LoadGrammar($g1)
+$eng.LoadGrammar($g2)
+$eng.SetInputToDefaultAudioDevice()
+$eng.EndSilenceTimeout = [TimeSpan]::FromMilliseconds(900)
+$eng.EndSilenceTimeoutAmbiguous = [TimeSpan]::FromMilliseconds(1200)
+[Console]::Out.WriteLine('READY ' + $info.Culture.Name)
+while ($true) {
+  $r = $eng.Recognize([TimeSpan]::FromSeconds(30))
+  if (-not $r) { continue }
+  $first = $r.Words | Select-Object -First 1
+  $conf = if ($first) { $first.Confidence } else { $r.Confidence }
+  if ($conf -lt $env:COSMO_MIN) { continue }
+  $wav = ''
+  if ($r.Grammar.Name -eq 'cmd' -and $r.Audio) {
+    $ms = New-Object IO.MemoryStream
+    $r.Audio.WriteToWaveStream($ms)
+    $wav = [Convert]::ToBase64String($ms.ToArray())
+  }
+  [Console]::Out.WriteLine('HEARD ' + $r.Grammar.Name + ' ' + [Math]::Round($conf, 2) + ' ' + $wav)
+}
+`;
+let cosmo = null;
+
+function startCosmo(send) {
+  if (cosmo || process.platform !== "win32") {
+    if (process.platform !== "win32") send({ type: "error", reason: "platform" });
+    return;
+  }
+  const fs = require("fs");
+  const file = path.join(app.getPath("userData"), "cosmo.ps1");
+  fs.writeFileSync(file, COSMO_PS1);
+  const child = execFile(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
+    { windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, COSMO_MIN: process.env.COSMO_MIN || "0.55" } },
+  );
+  cosmo = child;
+  let buf = "";
+  let ready = false;
+  child.stdout.on("data", (chunk) => {
+    buf += chunk;
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (line.startsWith("READY")) {
+        ready = true;
+        send({ type: "ready", culture: line.slice(6) });
+      } else if (line.startsWith("HEARD")) {
+        const [, grammar, conf, wav] = line.split(" ");
+        send({ type: "heard", only: grammar !== "cmd" || !wav, confidence: Number(conf), wav: wav || null });
+      } else if (line.startsWith("ERR")) send({ type: "error", reason: line.slice(4) });
+    }
+  });
+  child.stderr.on("data", (d) => console.error("cosmo", String(d).slice(0, 300)));
+  child.on("exit", (code) => {
+    if (cosmo !== child) return;
+    cosmo = null;
+    // It never got going: let the page fall back to "Hey Jarvis". If it died later, start it again.
+    if (!ready) send({ type: "error", reason: `exit ${code}` });
+    else setTimeout(() => win && startCosmo(send), 3000);
+  });
+}
+
+function stopCosmo() {
+  const c = cosmo;
+  cosmo = null;
+  c?.kill();
+}
+
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icon.png")).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
@@ -185,6 +282,8 @@ app.whenReady().then(() => {
   ipcMain.on("open-hub", (_e, p) => shell.openExternal(HUB + (typeof p === "string" ? p : "/")));
   ipcMain.on("hide", () => win && win.hide());
   ipcMain.handle("screenshot", () => screenshot());
+  ipcMain.on("cosmo-start", (e) => startCosmo((m) => !e.sender.isDestroyed() && e.sender.send("cosmo", m)));
+  ipcMain.on("cosmo-stop", () => stopCosmo());
   ipcMain.handle("write", (_e, text, paste) => write(String(text).slice(0, 8000), !!paste));
   ipcMain.on("open-url", (_e, url) => {
     if (/^https?:\/\//i.test(String(url))) void shell.openExternal(String(url));
@@ -196,3 +295,4 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", (e) => e.preventDefault());
+app.on("before-quit", () => stopCosmo());

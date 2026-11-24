@@ -11,4 +11,13 @@ contextBridge.exposeInMainWorld("jarvisDesktop", {
   screenshot: () => ipcRenderer.invoke("screenshot"),
   write: (text, paste) => ipcRenderer.invoke("write", String(text), paste !== false),
   openUrl: (url) => ipcRenderer.send("open-url", String(url)),
+  onCosmo: (cb) => {
+    const h = (_e, m) => cb(m);
+    ipcRenderer.on("cosmo", h);
+    ipcRenderer.send("cosmo-start");
+    return () => {
+      ipcRenderer.removeListener("cosmo", h);
+      ipcRenderer.send("cosmo-stop");
+    };
+  },
 });
