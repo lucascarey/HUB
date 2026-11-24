@@ -51,6 +51,11 @@ function createWindow() {
     win.loadFile(path.join(__dirname, "offline.html"));
     setTimeout(() => win && win.loadURL(`${HUB}/compa`), 15000);
   });
+  // After signing in with the pasted email link Supabase may land on another HUB page: come back to the face.
+  win.webContents.on("did-navigate", (_e, url) => {
+    if (url.startsWith(HUB) && !new URL(url).pathname.startsWith("/compa"))
+      setTimeout(() => win && win.loadURL(`${HUB}/compa`), 2500);
+  });
   // Links (and the HUB itself) open in the normal browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);

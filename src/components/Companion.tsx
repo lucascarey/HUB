@@ -237,10 +237,13 @@ function Alive() {
   );
 }
 
-/** Sign-in with the 6-digit code from the email (magic links don't open inside the desktop app). */
+/**
+ * Sign-in for the desktop app: magic links open in the normal browser, so Lucas pastes the link from the
+ * email here instead (a 6-digit code also works if the email template ever includes one).
+ */
 function Login() {
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
+  const [value, setValue] = useState("");
   const [sent, setSent] = useState(false);
   const [msg, setMsg] = useState("");
   const d = desktop();
@@ -249,23 +252,36 @@ function Login() {
     e.preventDefault();
     if (!supabase) return;
     setMsg("Enviando…");
-    const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: false } });
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: { shouldCreateUser: false, emailRedirectTo: `${window.location.origin}/compa` },
+    });
     if (error) return setMsg("No pude mandar el mail. Revisá la dirección.");
     setSent(true);
-    setMsg("Te mandé un mail con un código de 6 números.");
+    setMsg("Te llegó un mail. No toques el botón: clic derecho → “Copiar dirección del enlace” y pegalo acá.");
   };
-  const verify = async (e: React.FormEvent) => {
+  const enter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) return;
-    setMsg("Verificando…");
-    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: "email" });
-    if (error) setMsg("Ese código no sirve. Probá de nuevo o pedí otro.");
+    const v = value.trim();
+    if (/^https:\/\/\S+\/auth\/v1\/verify\?/.test(v)) {
+      setMsg("Entrando…");
+      window.location.href = v;
+      return;
+    }
+    if (/^\d{6}$/.test(v)) {
+      setMsg("Verificando…");
+      const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: v, type: "email" });
+      if (error) setMsg("Ese código no sirve. Pedí otro mail.");
+      return;
+    }
+    setMsg("Eso no parece el link del mail. Copiá el enlace del botón del mail.");
   };
 
   return (
     <div className="compa login" onMouseEnter={() => d?.setClickable(true)}>
       <div className="compa-head static">
-        <CozmoFace emotion="dormido" size={120} />
+        <CozmoFace emotion="dormido" size={110} />
       </div>
       {!sent ? (
         <form onSubmit={send} className="compa-form">
@@ -273,8 +289,8 @@ function Login() {
           <button type="submit">Despertar</button>
         </form>
       ) : (
-        <form onSubmit={verify} className="compa-form">
-          <input inputMode="numeric" required placeholder="Código" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+        <form onSubmit={enter} className="compa-form">
+          <input required placeholder="Pegá el link del mail" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
           <button type="submit">Entrar</button>
         </form>
       )}
