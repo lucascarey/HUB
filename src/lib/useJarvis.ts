@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
-import { supabase } from "@/lib/supabase";
+import { isEmotion, type Emotion } from "./cozmo";
+import { supabase } from "./supabase";
 
-type Turn = { role: "user" | "assistant"; text: string };
-type Phase = "idle" | "listening" | "thinking" | "speaking";
+export type Turn = { role: "user" | "assistant"; text: string };
+export type Phase = "idle" | "listening" | "thinking" | "speaking";
 
 // Minimal typing for the Web Speech API (Chrome ships it as webkitSpeechRecognition).
 type SRResult = { isFinal: boolean; 0: { transcript: string } };
@@ -54,27 +54,27 @@ function speak(text: string, onEnd: () => void) {
   synth.speak(u);
 }
 
-interface Props {
+interface Options {
   signedIn: boolean;
   onChanged: () => void;
 }
 
-/** Jarvis: talk or type to the HUB's assistant. Optional hands-free mode wakes on "Jarvis". */
-export default function Jarvis({ signedIn, onChanged }: Props) {
+/** Jarvis's voice and conversation: speech in, Gemini reply, speech out, the face's emotion, hands-free "Jarvis" wake word. */
+export function useJarvis({ signedIn, onChanged }: Options) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [interim, setInterim] = useState("");
-  const [text, setText] = useState("");
   const [voice, setVoice] = useState(true);
   const [wake, setWake] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [emotion, setEmotion] = useState<Emotion>("normal");
+  const [changes, setChanges] = useState(0);
   const [supported, setSupported] = useState(false);
   const rec = useRef<SR | null>(null);
   const wakeRef = useRef(false);
   const phaseRef = useRef<Phase>("idle");
   const turnsRef = useRef<Turn[]>([]);
-  const listRef = useRef<HTMLDivElement>(null);
   const awaitingCommand = useRef(false);
   // Speech callbacks outlive renders: they call the latest ask() through this ref.
   const askRef = useRef<(q: string) => Promise<void>>(async () => {});
@@ -96,9 +96,6 @@ export default function Jarvis({ signedIn, onChanged }: Props) {
     window.speechSynthesis?.getVoices();
   }, []);
 
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [turns, interim, phase]);
 
   const push = (t: Turn) => {
     const next = [...turnsRef.current, t].slice(-16);
@@ -142,6 +139,7 @@ export default function Jarvis({ signedIn, onChanged }: Props) {
           void askRef.current(command);
         } else {
           awaitingCommand.current = true;
+          setEmotion("sorprendido");
           setOpen(true);
           setP("listening");
           setInterim("Te escucho…");
@@ -205,7 +203,9 @@ export default function Jarvis({ signedIn, onChanged }: Props) {
       const json = await res.json().catch(() => ({}));
       if (json.text) {
         reply = json.text;
+        setEmotion(typeof json.emotion === "string" && isEmotion(json.emotion) ? json.emotion : "normal");
         if (json.changed?.hub) onChanged();
+        if (json.changed?.hub || json.changed?.memory || json.changed?.calendar) setChanges((c) => c + 1);
       } else {
         reply =
           json.error === "not_configured" ? "Todavía falta cargar la clave de Gemini en Vercel."
@@ -214,9 +214,11 @@ export default function Jarvis({ signedIn, onChanged }: Props) {
           : json.error === "bad_key" ? "La clave de Gemini no funciona. Revisala en Vercel."
           : json.error === "rate_limited" ? "Llegué al límite gratis de Gemini por ahora. Probá en un rato."
           : "Algo falló. Probá de nuevo.";
+        setEmotion("triste");
       }
     } catch {
       reply = "No tengo conexión ahora.";
+      setEmotion("triste");
     }
     push({ role: "assistant", text: reply });
     const resume = () => {
@@ -271,13 +273,6 @@ export default function Jarvis({ signedIn, onChanged }: Props) {
     startListening("command");
   };
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    const q = text;
-    setText("");
-    void ask(q);
-  };
-
   const clear = () => {
     turnsRef.current = [];
     setTurns([]);
@@ -286,86 +281,10 @@ export default function Jarvis({ signedIn, onChanged }: Props) {
     } catch {}
   };
 
-  const status =
-    phase === "listening" ? "Escuchando…"
-    : phase === "thinking" ? "Pensando…"
-    : phase === "speaking" ? "Hablando · tocá para cortar"
-    : wake ? "Decí “Jarvis” y lo que necesites"
-    : "Tocá el micrófono o escribí";
+  const lastReply = [...turns].reverse().find((t) => t.role === "assistant")?.text ?? "";
 
-  return (
-    <>
-      <button
-        type="button"
-        id="jarvisOrb"
-        className={`jv-${phase}${wake ? " jv-wake" : ""}`}
-        aria-label={open ? "Cerrar Jarvis" : "Abrir Jarvis"}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className="jv-core" />
-      </button>
-
-      {open && (
-        <section className="panel" id="jarvis" aria-label="Jarvis">
-          <button type="button" className="x" onClick={() => setOpen(false)} aria-label="Cerrar">×</button>
-          <header className="jv-head">
-            <div className="k">Asistente</div>
-            <h2>Jarvis</h2>
-          </header>
-
-          {!signedIn ? (
-            <p className="note">Iniciá sesión desde Cuenta para usar Jarvis: trabaja con tus datos guardados en la nube.</p>
-          ) : (
-            <>
-              <div className="jv-list" ref={listRef}>
-                {turns.length === 0 && (
-                  <p className="note">
-                    Probá: “¿qué tengo mañana?”, “agendá dentista el jueves a las 10”, “anotá llamar a Juan en Gato Negro”, “anotá press banca 60 kilos 8 reps”.
-                  </p>
-                )}
-                {turns.map((t, i) => (
-                  <p key={i} className={`jv-msg jv-${t.role}`}>{t.text}</p>
-                ))}
-                {interim && <p className="jv-msg jv-user jv-interim">{interim}</p>}
-                {phase === "thinking" && <p className="jv-msg jv-assistant jv-dots"><span /><span /><span /></p>}
-              </div>
-
-              {note && <p className="note">{note}</p>}
-
-              <form className="jv-input" onSubmit={submit}>
-                <input
-                  type="text"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  placeholder="Escribile a Jarvis…"
-                  aria-label="Mensaje para Jarvis"
-                  disabled={phase === "thinking"}
-                />
-                {supported && (
-                  <button type="button" className={`jv-mic jv-${phase}`} onClick={mic} aria-label="Hablar">
-                    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                      <path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z" />
-                    </svg>
-                  </button>
-                )}
-              </form>
-
-              <footer className="jv-foot">
-                <span className="jv-status">{status}</span>
-                <span className="jv-opts">
-                  <label><input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} /> Voz</label>
-                  {supported && (
-                    <label title="Mientras el HUB está abierto en pantalla">
-                      <input type="checkbox" checked={wake} onChange={toggleWake} /> Manos libres
-                    </label>
-                  )}
-                  {turns.length > 0 && <button type="button" className="mb-link" onClick={clear}>Borrar charla</button>}
-                </span>
-              </footer>
-            </>
-          )}
-        </section>
-      )}
-    </>
-  );
+  return {
+    open, setOpen, turns, phase, interim, voice, setVoice, wake, toggleWake, note, supported,
+    emotion, changes, lastReply, ask, mic, clear,
+  };
 }

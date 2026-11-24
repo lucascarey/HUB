@@ -1,7 +1,8 @@
 import { ApiError, GoogleGenAI, type Content, type Part } from "@google/genai";
 import { z } from "zod";
 import { supabaseAs, userFromRequest } from "@/lib/gmail-server";
-import { jarvisTools, todayISO, TZ, type Changed } from "@/lib/jarvis-tools";
+import { EMOTION_NAMES, isEmotion } from "@/lib/cozmo";
+import { jarvisTools, memoryDigest, todayISO, TZ, type Changed } from "@/lib/jarvis-tools";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -12,7 +13,14 @@ type Turn = { role: "user" | "assistant"; text: string };
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const MAX_STEPS = 8;
 
-const SYSTEM = `Sos Jarvis, el asistente personal de Lucas dentro de su HUB (su "segundo cerebro"). Hablás en español rioplatense, con voseo, tono cercano y directo.
+const SYSTEM = `Sos Jarvis, el asistente personal de Lucas y el cerebro de su HUB. Tenés cara de robot (dos ojos al estilo Cozmo) y personalidad: curioso, cálido, con humor seco. Hablás en español rioplatense, con voseo, tono cercano y directo.
+
+Tu cara:
+- Empezá SIEMPRE tu respuesta con tu emoción entre corchetes, una de: ${EMOTION_NAMES.join(", ")}. Ejemplo: "[feliz] Listo, te lo agendé." La emoción tiene que ser coherente con lo que decís.
+
+Tu memoria:
+- Sos el que construye el cerebro de Lucas. Cuando te cuente algo personal o útil (quién es alguien, qué le gusta, qué planea, cómo le fue), guardalo con "recordar" sin preguntar. No guardes cosas triviales ni repetidas.
+- Usá lo que recordás para personalizar y para recomendarle cosas o recordarle pendientes cuando venga al caso.
 
 Lo que podés hacer con tus herramientas:
 - HUB: proyectos, tareas, eventos, ideas, plata (deudas y pagos) y hábitos. Buscar, crear, marcar hecho, renombrar, cambiar fecha.
@@ -45,6 +53,13 @@ function schemaFor(s: z.ZodObject) {
   return rest;
 }
 
+/** "[feliz] Listo." → emotion "feliz" and the text without the tag. */
+function splitEmotion(raw: string) {
+  const m = raw.trim().match(/^\[([a-záéíóú]+)\]\s*/i);
+  const name = m?.[1].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ?? "";
+  return { text: (m ? raw.trim().slice(m[0].length) : raw).trim(), emotion: isEmotion(name) ? name : "normal" };
+}
+
 /** Jarvis: Gemini with tools over the signed-in person's HUB, Gmail and Google Calendar. */
 export async function POST(req: Request) {
   const key = process.env.GEMINI_API_KEY;
@@ -64,12 +79,14 @@ export async function POST(req: Request) {
   if (!turns.length || turns[turns.length - 1].role !== "user")
     return Response.json({ error: "bad_request" }, { status: 400 });
 
-  const changed: Changed = { hub: false, calendar: false };
-  const tools = jarvisTools(supabaseAs(user.token), changed);
+  const changed: Changed = { hub: false, calendar: false, memory: false };
+  const sb = supabaseAs(user.token);
+  const tools = jarvisTools(sb, changed);
+  const memory = await memoryDigest(sb);
   const byName = new Map(tools.map((t) => [t.name, t]));
   const ai = new GoogleGenAI({ apiKey: key });
   const config = {
-    systemInstruction: `${SYSTEM}\n\n${now()}`,
+    systemInstruction: `${SYSTEM}\n\nLo que recordás de Lucas:\n${memory}\n\n${now()}`,
     tools: [{
       functionDeclarations: tools.map((t) => ({
         name: t.name,
@@ -85,8 +102,8 @@ export async function POST(req: Request) {
       const res = await ai.models.generateContent({ model: MODEL, contents, config });
       const calls = res.functionCalls ?? [];
       if (!calls.length) {
-        const text = (res.text ?? "").trim();
-        return Response.json({ text: text || "Listo.", changed });
+        const { text, emotion } = splitEmotion(res.text ?? "");
+        return Response.json({ text: text || "Listo.", emotion, changed });
       }
       // Keep the model's turn exactly as returned (it carries thought signatures Gemini needs back).
       const modelTurn = res.candidates?.[0]?.content;

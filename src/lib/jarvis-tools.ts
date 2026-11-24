@@ -15,7 +15,7 @@ const TIPOS = ["proyecto", "tarea", "evento", "idea", "dinero", "habito"] as con
 const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha YYYY-MM-DD");
 
 /** Something the assistant changed, so the app knows to reload. */
-export type Changed = { hub: boolean; calendar: boolean };
+export type Changed = { hub: boolean; calendar: boolean; memory: boolean };
 
 const json = (v: unknown) => JSON.stringify(v);
 
@@ -327,7 +327,62 @@ export function jarvisTools(sb: SupabaseClient, changed: Changed): JarvisTool[] 
     },
   });
 
-  return [buscarItems, crearItem, actualizarItem, verGym, registrarGym, leerMails, verCalendario, crearEvento, editarEvento, borrarEvento];
+  const KINDS = ["dato", "persona", "preferencia", "plan", "recuerdo", "idea"] as const;
+
+  const recordar = tool({
+    name: "recordar",
+    description:
+      "Guarda en tu memoria algo que vale la pena recordar de Lucas: personas (quién es quién), preferencias, planes, datos, ideas o recuerdos. Usalo por tu cuenta cada vez que Lucas cuente algo personal o útil para más adelante. Escribilo corto y en tercera persona (\"A Lucas le gusta…\").",
+    inputSchema: z.object({
+      contenido: z.string().min(3),
+      tipo: z.enum(KINDS),
+      importancia: z.number().int().min(1).max(3).optional().describe("3 = muy importante"),
+    }),
+    run: async (q) => {
+      const { error } = await sb.from("memories").insert({
+        id: newId(), content: q.contenido.trim(), kind: q.tipo, importance: q.importancia ?? 2,
+      });
+      if (error) return `Error: ${error.message}`;
+      changed.memory = true;
+      return json({ ok: true });
+    },
+  });
+
+  const buscarRecuerdos = tool({
+    name: "buscar_recuerdos",
+    description: "Busca en tu memoria cosas que Lucas te contó antes.",
+    inputSchema: z.object({ texto: z.string().optional(), tipo: z.enum(KINDS).optional() }),
+    run: async (q) => {
+      let query = sb.from("memories").select("id,kind,content,importance,created_at").order("created_at", { ascending: false }).limit(40);
+      if (q.texto) query = query.ilike("content", `%${q.texto}%`);
+      if (q.tipo) query = query.eq("kind", q.tipo);
+      const { data, error } = await query;
+      if (error) return `Error: ${error.message}`;
+      return json(data);
+    },
+  });
+
+  const olvidar = tool({
+    name: "olvidar",
+    description: "Borra un recuerdo por id (de buscar_recuerdos), cuando ya no es cierto o Lucas lo pide.",
+    inputSchema: z.object({ id: z.string() }),
+    run: async (q) => {
+      const { error } = await sb.from("memories").delete().eq("id", q.id);
+      if (error) return `Error: ${error.message}`;
+      changed.memory = true;
+      return json({ ok: true });
+    },
+  });
+
+  return [recordar, buscarRecuerdos, olvidar, buscarItems, crearItem, actualizarItem, verGym, registrarGym, leerMails, verCalendario, crearEvento, editarEvento, borrarEvento];
+}
+
+/** What Jarvis already knows, to put in front of every conversation (most important and newest first). */
+export async function memoryDigest(sb: SupabaseClient) {
+  const { data } = await sb.from("memories").select("kind,content,importance").order("importance", { ascending: false })
+    .order("created_at", { ascending: false }).limit(40);
+  const rows = (data ?? []) as { kind: string; content: string }[];
+  return rows.length ? rows.map((r) => `- (${r.kind}) ${r.content}`).join("\n") : "(todavía no recordás nada)";
 }
 
 /** Today in Argentina as YYYY-MM-DD. */
