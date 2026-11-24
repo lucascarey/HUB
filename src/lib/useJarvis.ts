@@ -5,6 +5,7 @@ import { isEmotion, type Emotion } from "./cozmo";
 import { supabase } from "./supabase";
 import { recordPhrase, stopRecording } from "./recorder";
 import { startWakeWord, stopWakeWord } from "./wakeword";
+import { LiveChat } from "./live";
 
 export type Turn = { role: "user" | "assistant"; text: string };
 export type Phase = "idle" | "listening" | "thinking" | "speaking";
@@ -187,6 +188,9 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   const onCosmoRef = useRef<(m: CosmoEvent) => void>(() => {});
   // Speech callbacks outlive renders: they call the latest ask() through this ref.
   const askRef = useRef<(q: string) => Promise<void>>(async () => {});
+  const live = useRef<LiveChat | null>(null);
+  const liveFailed = useRef(false);
+  const liveTurn = useRef<{ user: number; assistant: number }>({ user: -1, assistant: -1 });
 
   const setP = (p: Phase) => {
     phaseRef.current = p;
@@ -213,6 +217,104 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     try {
       sessionStorage.setItem(HISTORY_KEY, JSON.stringify(next));
     } catch {}
+  };
+
+  /** Live chat transcript: grows the current turn in place, then starts a new one. */
+  const liveText = (role: "user" | "assistant", text: string, done: boolean) => {
+    if (!text) return;
+    const at = liveTurn.current[role];
+    if (at >= 0 && at < turnsRef.current.length && turnsRef.current[at].role === role) {
+      const next = turnsRef.current.map((t, i) => (i === at ? { role, text } : t));
+      turnsRef.current = next;
+      setTurns(next);
+    } else {
+      push({ role, text });
+      liveTurn.current[role] = turnsRef.current.length - 1;
+    }
+    if (done) {
+      liveTurn.current[role] = -1;
+      try {
+        sessionStorage.setItem(HISTORY_KEY, JSON.stringify(turnsRef.current));
+      } catch {}
+    }
+    if (role === "user") setInterim(done ? "" : text);
+  };
+
+  /** Cosmo's tools during a live chat: this computer's ones here, the rest on the HUB server. */
+  const liveTool = async (name: string, args: Record<string, unknown>) => {
+    const d = desktop();
+    if (name === "escribir") {
+      const ok = await d?.write?.(String(args.texto ?? ""), args.pegar !== false).catch(() => false);
+      return ok ? "Escrito donde está el cursor (y copiado)." : "No pude escribirlo.";
+    }
+    if (name === "abrir") {
+      if (!d?.openUrl) return "Solo puedo abrir links desde la app de escritorio.";
+      d.openUrl(String(args.url ?? ""));
+      return "Abierto.";
+    }
+    if (name === "mirar_pantalla") {
+      const shot = await d?.screenshot?.().catch(() => null);
+      return shot ? `data:image/jpeg;base64,${shot}` : "No pude ver la pantalla.";
+    }
+    const t = await token();
+    const res = await fetch("/api/jarvis/tool", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+      body: JSON.stringify({ name, args }),
+    }).catch(() => null);
+    const json = res ? await res.json().catch(() => ({})) : {};
+    if (json.changed?.hub) onChanged();
+    if (json.changed?.hub || json.changed?.memory || json.changed?.calendar) setChanges((c) => c + 1);
+    return String(json.output ?? "Error de conexión.");
+  };
+
+  /**
+   * Opens a live voice chat (Windows app only). Resolves false if Gemini Live can't be reached,
+   * so the caller falls back to the one-question-at-a-time flow.
+   */
+  const startLive = async (firstPhraseWav?: string | null) => {
+    if (live.current) return true;
+    if (liveFailed.current || !desktop()?.write) return false;
+    const bearer = await token();
+    if (!bearer) return false;
+    void stopWakeWord();
+    setOpen(true);
+    setNote(null);
+    liveTurn.current = { user: -1, assistant: -1 };
+    const chat = new LiveChat({
+      bearer,
+      desktop: true,
+      onState: (s) => {
+        if (live.current !== chat) return;
+        setP(s === "connecting" ? "thinking" : s);
+        if (s === "speaking") setEmotion("normal");
+        if (s === "thinking") setEmotion("concentrado");
+      },
+      onTurn: liveText,
+      runTool: liveTool,
+      onEnd: (reason) => {
+        if (live.current !== chat) return;
+        live.current = null;
+        setInterim("");
+        setP("idle");
+        if (reason === "error") setNote("Se cortó la charla. Decime “Cosmo” de nuevo.");
+        if (reason === "idle") setEmotion("desganado");
+        if (wakeRef.current) startListeningRef.current("wake");
+      },
+    });
+    live.current = chat;
+    const ok = await chat.start(firstPhraseWav).catch((e) => {
+      console.error("live start", e);
+      return false;
+    });
+    if (!ok) {
+      live.current = null;
+      liveFailed.current = true;
+      setP("idle");
+      setNote("La charla en vivo no está disponible ahora. Te respondo de a una pregunta.");
+      return false;
+    }
+    return true;
   };
 
   // Hands-free listening restarts itself after every phrase while the mode is on.
@@ -377,6 +479,11 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     }
     if (m.type !== "heard" || !wakeRef.current || phaseRef.current !== "idle") return;
     setEmotion("sorprendido");
+    void startLive(m.wav).then((ok) => {
+      if (!ok) oneShot(m);
+    });
+  };
+  const oneShot = (m: Extract<CosmoEvent, { type: "heard" }>) => {
     if (m.only || !m.wav) return startListening("command");
     const wav = m.wav;
     setP("thinking");
@@ -499,6 +606,14 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   }, [wake, signedIn, startListening]);
 
   const mic = () => {
+    // In a live chat a click hangs up; on the desktop, a click opens one.
+    if (live.current) return live.current.stop("stopped");
+    if (phase === "idle" && desktop()?.write && !liveFailed.current) {
+      void startLive().then((ok) => {
+        if (!ok) startListening("command");
+      });
+      return;
+    }
     if (phase === "speaking") {
       stopSpeaking();
       setP("idle");
