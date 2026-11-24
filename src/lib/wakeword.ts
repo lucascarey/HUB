@@ -3,6 +3,7 @@
  * no audio leaves the device). Keeps listening with the tab in the background.
  */
 import { WakeWordStream } from "./oww";
+import { ensureRunning } from "./audio-unlock";
 
 const WORKLET = `
 class Tap extends AudioWorkletProcessor {
@@ -34,17 +35,23 @@ async function load() {
   return new WakeWordStream(ort, { mel, emb, ww });
 }
 
-/** Starts listening for "Hey Jarvis"; calls cb on each detection. Throws if the models or microphone fail. */
-export async function startWakeWord(cb: () => void) {
+/**
+ * Starts listening for "Hey Jarvis"; calls cb on each detection. Throws if the models or microphone fail.
+ * Resolves false when the browser holds the audio until the first touch (it starts by itself then).
+ */
+export async function startWakeWord(cb: () => void): Promise<boolean> {
   onWake = cb;
-  if (listening) return;
+  if (listening) return true;
   listening = true;
   try {
     stream ??= await (loading ??= load());
     media = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
-    if (!listening) return stopTracks();
+    if (!listening) {
+      stopTracks();
+      return true;
+    }
     ctx = new AudioContext({ sampleRate: 16000 });
     const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
     await ctx.audioWorklet.addModule(url);
@@ -73,6 +80,7 @@ export async function startWakeWord(cb: () => void) {
       }
     };
     src.connect(tap);
+    return await ensureRunning(ctx);
   } catch (e) {
     listening = false;
     loading = null;

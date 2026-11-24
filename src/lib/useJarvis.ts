@@ -224,6 +224,14 @@ export function useJarvis({ signedIn, onChanged }: Options) {
         void stopWakeWord();
         setEmotion("sorprendido");
         startListening("command");
+      }).then((running) => {
+        if (running) return;
+        // The browser holds the audio until the first touch; it starts by itself on that touch.
+        const msg = "Tocame una vez y empiezo a escucharte.";
+        setNote(msg);
+        const clear = () => setNote((n) => (n === msg ? null : n));
+        window.addEventListener("pointerdown", clear, { once: true, capture: true });
+        window.addEventListener("keydown", clear, { once: true, capture: true });
       }).catch((e) => {
         console.error("wake word", e);
         wakeWordFailed.current = true;

@@ -13,6 +13,9 @@ let win = null;
 let tray = null;
 let anim = null;
 
+// Audio (microphone and voice) works from the start, without waiting for a click.
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", () => win && win.showInactive());
 

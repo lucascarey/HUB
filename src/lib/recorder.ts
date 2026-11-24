@@ -3,6 +3,8 @@
  * Stops by itself after ~1.2 s of silence once speech started, after 12 s, or after 6 s with no speech.
  * Used where the browser's speech recognizer is missing (the desktop app, Firefox).
  */
+import { ensureRunning } from "./audio-unlock";
+
 const RATE = 16000;
 const WORKLET = `
 class Rec extends AudioWorkletProcessor {
@@ -27,6 +29,7 @@ export async function recordPhrase(onLevel?: (level: number) => void): Promise<s
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
   const ctx = new AudioContext({ sampleRate: RATE });
+  void ensureRunning(ctx);
   const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
   await ctx.audioWorklet.addModule(url);
   URL.revokeObjectURL(url);
