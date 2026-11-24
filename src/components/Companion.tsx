@@ -191,7 +191,7 @@ function Alive() {
   // Speech bubble: what he hears, then what he says, for a few seconds.
   useEffect(() => {
     if (jarvis.interim) return setBubble(jarvis.interim);
-    if (phase === "thinking") return setBubble("Pensando…");
+    if (phase === "thinking") return setBubble("…");
     if (phase === "speaking" && jarvis.lastReply) return setBubble(jarvis.lastReply);
     if (phase === "idle") {
       // Long enough to read it.
@@ -355,7 +355,6 @@ function Alive() {
       >
         <CozmoFace emotion={shown} mode={mood === "asleep" ? "idle" : phase} size={170} square gaze={gaze} />
       </button>
-      {phase === "listening" && mood === "awake" && <p className="compa-hint">te escucho</p>}
       {jarvis.note && <p className="compa-note">{jarvis.note}</p>}
     </div>
   );
