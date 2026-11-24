@@ -11,6 +11,8 @@ type Turn = { role: "user" | "assistant"; text: string };
 
 // "gemini-flash-latest" follows Google's current Flash model, which the free tier of AI Studio includes.
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+// Tried in order when Google answers that a model does not exist.
+const FALLBACKS = ["gemini-2.5-flash", "gemini-2.0-flash"];
 const MAX_STEPS = 8;
 
 const SYSTEM = `Sos Jarvis, el asistente personal de Lucas y el cerebro de su HUB. Tenés cara de robot (dos ojos al estilo Cozmo) y personalidad: curioso, cálido, con humor seco. Hablás en español rioplatense, con voseo, tono cercano y directo.
@@ -84,7 +86,9 @@ export async function POST(req: Request) {
   const tools = jarvisTools(sb, changed);
   const memory = await memoryDigest(sb);
   const byName = new Map(tools.map((t) => [t.name, t]));
-  const ai = new GoogleGenAI({ apiKey: key });
+  // v1beta: the "-latest" aliases and function calling live there (the SDK defaults to v1).
+  const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
+  const models = [...new Set([MODEL, ...FALLBACKS])];
   const config = {
     systemInstruction: `${SYSTEM}\n\nLo que recordás de Lucas:\n${memory}\n\n${now()}`,
     tools: [{
@@ -99,7 +103,19 @@ export async function POST(req: Request) {
 
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
-      const res = await ai.models.generateContent({ model: MODEL, contents, config });
+      let res;
+      for (;;) {
+        try {
+          res = await ai.models.generateContent({ model: models[0], contents, config });
+          break;
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 404 && models.length > 1) {
+            console.warn("jarvis model not found, trying next", models.shift());
+            continue;
+          }
+          throw e;
+        }
+      }
       const calls = res.functionCalls ?? [];
       if (!calls.length) {
         const { text, emotion } = splitEmotion(res.text ?? "");
