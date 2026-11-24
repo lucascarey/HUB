@@ -81,6 +81,20 @@ const readTurns = (): Turn[] => {
   }
 };
 
+/** Sends a diagnostic line to the HUB server log (desktop app only), so problems on Lucas's PC can be read remotely. */
+export function diag(event: string, detail?: unknown) {
+  if (!desktop()) return;
+  void token().then((t) => {
+    if (!t) return;
+    return fetch("/api/jarvis/log", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+    body: JSON.stringify({ event, detail }),
+    keepalive: true,
+  });
+  }).catch(() => {});
+}
+
 async function token() {
   const { data } = (await supabase?.auth.getSession()) ?? { data: { session: null } };
   return data.session?.access_token ?? null;
@@ -191,7 +205,9 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   // Speech callbacks outlive renders: they call the latest ask() through this ref.
   const askRef = useRef<(q: string) => Promise<void>>(async () => {});
   const live = useRef<LiveChat | null>(null);
-  const liveFailed = useRef(false);
+  // When the live chat last failed: it's retried after a couple of minutes instead of never.
+  const liveFailedAt = useRef(0);
+  const liveDown = () => Date.now() - liveFailedAt.current < 120_000;
   const liveTurn = useRef<{ user: number; assistant: number }>({ user: -1, assistant: -1 });
 
   const setP = (p: Phase) => {
@@ -209,7 +225,26 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     } catch {}
     // Voices load asynchronously in Chrome.
     window.speechSynthesis?.getVoices();
+    const d = desktop();
+    if (d) diag("start", { bridge: Object.keys(d), ua: navigator.userAgent.slice(-60) });
   }, []);
+
+  // Safety net: if he's been "listening" or "thinking" for over a minute outside a live chat, something
+  // got stuck. Go back to idle so "Cosmo" and clicks work again.
+  useEffect(() => {
+    if (phase === "idle" || phase === "speaking") return;
+    const t = setTimeout(() => {
+      if (live.current || phaseRef.current === "idle") return;
+      diag("stuck", phaseRef.current);
+      rec.current?.abort();
+      rec.current = null;
+      stopRecording();
+      setInterim("");
+      setP("idle");
+      if (wakeRef.current) startListeningRef.current("wake");
+    }, 60_000);
+    return () => clearTimeout(t);
+  }, [phase]);
 
 
   const push = (t: Turn) => {
@@ -276,7 +311,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
    */
   const startLive = async (firstPhraseWav?: string | null) => {
     if (live.current) return true;
-    if (liveFailed.current || !desktop()?.write) return false;
+    if (liveDown() || !desktop()?.write) return false;
     const bearer = await token();
     if (!bearer) return false;
     void stopWakeWord();
@@ -296,6 +331,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       runTool: liveTool,
       onEnd: (reason) => {
         if (live.current !== chat) return;
+        diag("live-end", { reason, err: chat.lastError });
         live.current = null;
         setInterim("");
         setP("idle");
@@ -309,9 +345,10 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       console.error("live start", e);
       return false;
     });
+    diag("live-start", { ok, err: chat.lastError, phrase: !!firstPhraseWav });
     if (!ok) {
       live.current = null;
-      liveFailed.current = true;
+      liveFailedAt.current = Date.now();
       setP("idle");
       setNote("La charla en vivo no está disponible ahora. Te respondo de a una pregunta.");
       return false;
@@ -330,6 +367,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       body: JSON.stringify({ audio: wav }),
     });
     const json = await res.json().catch(() => ({}));
+    if (!res.ok) diag("escuchar", { status: res.status, error: json.error });
     if (!res.ok) setNote(json.error === "busy" ? "Gemini está saturado y no te pude entender. Probá de nuevo en un ratito." : "No te pude entender. Probá de nuevo.");
     return String(json.text ?? "").trim();
   };
@@ -347,6 +385,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       }
     } catch (e) {
       console.error("listen", e);
+      diag("mic-error", String(e));
       setNote("No pude usar el micrófono.");
     }
     setInterim("");
@@ -470,6 +509,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   startListeningRef.current = startListening;
 
   onCosmoRef.current = (m: CosmoEvent) => {
+    diag(`cosmo-${m.type}`, m.type === "heard" ? { only: m.only, conf: m.confidence, wav: m.wav?.length ?? 0, phase: phaseRef.current, wake: wakeRef.current } : m);
     if (m.type === "error") {
       console.warn("cosmo", m.reason);
       cosmoFailed.current = true;
@@ -608,26 +648,32 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   }, [wake, signedIn, startListening]);
 
   const mic = () => {
+    diag("click", { phase: phaseRef.current, live: !!live.current, liveDown: liveDown() });
     // In a live chat a click hangs up; on the desktop, a click opens one.
     if (live.current) return live.current.stop("stopped");
-    if (phase === "idle" && desktop()?.write && !liveFailed.current) {
+    // Stuck waiting for an answer: a click cancels it and starts over.
+    if (phaseRef.current === "thinking" && desktop()) {
+      setInterim("");
+      setP("idle");
+    }
+    if (phaseRef.current === "idle" && desktop()?.write && !liveDown()) {
       void startLive().then((ok) => {
         if (!ok) startListening("command");
       });
       return;
     }
-    if (phase === "speaking") {
+    if (phaseRef.current === "speaking") {
       stopSpeaking();
       setP("idle");
       if (wakeRef.current) startListening("wake");
       return;
     }
-    if (phase === "listening") {
+    if (phaseRef.current === "listening") {
       rec.current?.stop();
       stopRecording();
       return;
     }
-    if (phase === "thinking") return;
+    if (phaseRef.current === "thinking") return;
     setOpen(true);
     startListening("command");
   };

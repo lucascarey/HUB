@@ -53,6 +53,8 @@ function Alive() {
   const moodRef = useRef<Mood>("awake");
   const area = useRef<{ x: number; y: number; width: number; height: number; winW: number; winH: number } | null>(null);
   const pos = useRef({ x: 0, y: 0 });
+  // While the mouse is over him he stays put, so he's easy to click.
+  const hovered = useRef(false);
   const d = desktop();
 
   // Hands-free is the point of the companion: turn it on once.
@@ -62,6 +64,7 @@ function Alive() {
   }, []);
 
   const go = useCallback((x: number, y: number, ms = 900) => {
+    if (hovered.current) return;
     pos.current = { x, y };
     d?.moveTo(Math.round(x), Math.round(y), ms);
   }, [d]);
@@ -83,21 +86,30 @@ function Alive() {
     const cx = Math.max(a.x, Math.min(a.x + a.width - a.winW, nx));
     const cy = Math.max(a.y, Math.min(bottom + 4, y));
     const dist = Math.hypot(cx - pos.current.x, cy - pos.current.y);
-    const ms = where === "hide" ? 700 : where === "float" ? Math.min(5200, 1400 + dist * 3.2) : 1100;
+    // Floating is a slow, steady drift (about 60 px per second).
+    const ms = where === "hide" ? 700 : where === "float" ? Math.max(3500, Math.min(10_000, dist * 16)) : 1100;
     go(cx, cy, ms);
   }, [go]);
 
-  // His eyes follow the mouse around the screen (a few times a second, smoothed in the face).
+  // Most of the time he looks around on his own; every so often he follows the mouse for a few seconds,
+  // and he always notices it when it comes close.
   const gaze = useRef<{ x: number; y: number } | null>(null);
+  const followUntil = useRef(0);
   useEffect(() => {
     if (!d?.gaze) return;
+    let next = Date.now() + rand(6000, 14_000);
     const t = setInterval(() => {
+      const now = Date.now();
+      if (now > next) {
+        followUntil.current = now + rand(2500, 6000);
+        next = now + rand(10_000, 25_000);
+      }
       if (moodRef.current !== "awake") return void (gaze.current = null);
       void d.gaze!().then((g) => {
         if (!g) return;
         const far = Math.hypot(g.dx, g.dy);
-        // Very close (over his own head) or idle far away for long: let him glance on his own.
-        gaze.current = far < 40 ? null : { x: g.dx / 500, y: g.dy / 350 };
+        const follow = (Date.now() < followUntil.current || far < 260) && far > 40;
+        gaze.current = follow ? { x: g.dx / 500, y: g.dy / 350 } : null;
       }).catch(() => {});
     }, 120);
     return () => clearInterval(t);
@@ -146,7 +158,7 @@ function Alive() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
-      timer = setTimeout(tick, rand(7_000, 20_000));
+      timer = setTimeout(tick, rand(14_000, 30_000));
       if (phase !== "idle" || moodRef.current === "hidden") return;
       const idle = Date.now() - lastActive.current;
       if (moodRef.current === "awake" && idle > SLEEP_AFTER) {
@@ -157,8 +169,9 @@ function Alive() {
       }
       if (moodRef.current !== "awake") return;
       const a = area.current;
-      const act = pick(["float", "float", "float", "glance", "glance", "peek", "yawn", "stay"]);
-      if (act === "float" && a) spot("float", rand(a.x, a.x + a.width - a.winW), rand(a.y + 20, a.y + a.height - a.winH));
+      const act = pick(["float", "float", "glance", "glance", "peek", "yawn", "stay", "stay"]);
+      // A gentle drift from where he is, not a jump across the screen.
+      if (act === "float" && a) spot("float", pos.current.x + rand(-380, 380), pos.current.y + rand(-260, 260));
       else if (act === "peek" && a) {
         spot("peek");
         setTimeout(() => moodRef.current === "awake" && spot("show"), rand(5000, 11000));
@@ -231,13 +244,19 @@ function Alive() {
   const shown: Emotion = mood === "asleep" ? "dormido" : flash ?? jarvis.emotion;
 
   return (
-    <div className={`compa ${mood}`}>
+    <div className={`compa ${mood}${phase === "listening" ? " listening" : ""}`}>
       {bubble && mood === "awake" && <p className="compa-bubble">{bubble}</p>}
       <button
         type="button"
         className="compa-head"
-        onMouseEnter={() => d?.setClickable(true)}
-        onMouseLeave={() => d?.setClickable(false)}
+        onMouseEnter={() => {
+          hovered.current = true;
+          d?.setClickable(true);
+        }}
+        onMouseLeave={() => {
+          hovered.current = false;
+          d?.setClickable(false);
+        }}
         onClick={() => {
           wakeUp();
           jarvis.mic();

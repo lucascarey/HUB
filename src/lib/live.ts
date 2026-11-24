@@ -83,6 +83,8 @@ export class LiveChat {
   private userText = "";
   private botText = "";
   private toolsBusy = 0;
+  /** Why the last start() failed, for diagnostics. */
+  lastError = "";
 
   constructor(private hooks: LiveHooks) {}
 
@@ -96,8 +98,9 @@ export class LiveChat {
         headers: { "content-type": "application/json", authorization: `Bearer ${this.hooks.bearer}` },
         body: JSON.stringify({ model, desktop: this.hooks.desktop }),
       }).catch(() => null);
-      const json: { token?: string; model?: string; next?: number | null } = res ? await res.json().catch(() => ({})) : {};
+      const json: { token?: string; model?: string; next?: number | null; error?: string } = res ? await res.json().catch(() => ({})) : {};
       if (json.token && json.model && (await this.connect(json.token, json.model))) break;
+      this.lastError += `[${json.model ?? "?"}: ${res ? res.status : "net"} ${json.error ?? (json.token ? "connect" : "")}] `;
       model = typeof json.next === "number" ? json.next : null;
       if (model === null) return false;
     }
@@ -132,6 +135,7 @@ export class LiveChat {
           this.session?.close();
         } catch {}
         this.session = null;
+        this.lastError += "timeout ";
         settle(false);
       }, 10_000);
       ai.live
@@ -152,12 +156,14 @@ export class LiveChat {
             },
             onclose: (e) => {
               if (!ready) {
+                this.lastError += `closed ${e?.code} ${String(e?.reason ?? "").slice(0, 120)} `;
                 console.warn("live rejected", model, e?.code, e?.reason);
                 this.session = null;
                 return settle(false);
               }
               if (!this.ended) {
                 console.warn("live closed", e?.code, e?.reason);
+                this.lastError = `closed ${e?.code} ${String(e?.reason ?? "").slice(0, 120)}`;
                 this.stop("error");
               }
             },
