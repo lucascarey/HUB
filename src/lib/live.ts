@@ -9,6 +9,8 @@ import { ensureRunning } from "./audio-unlock";
 const IN_RATE = 16000;
 const OUT_RATE = 24000;
 const IDLE_MS = 25_000;
+/** How much voice is buffered before playing (seconds): more = smoother, less = snappier. */
+const JITTER_S = 0.35;
 const MAX_MS = 10 * 60_000;
 
 const WORKLET = `
@@ -206,7 +208,9 @@ export class LiveChat {
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.connect(ctx.destination);
-    this.playAt = Math.max(this.playAt, ctx.currentTime + 0.03);
+    // Audio arrives in small bursts over the network: when the queue ran dry, start a little later so the
+    // next pieces have time to arrive and the voice flows instead of stuttering.
+    if (this.playAt < ctx.currentTime + 0.02) this.playAt = ctx.currentTime + JITTER_S;
     src.start(this.playAt);
     this.playAt += buf.duration;
     this.playing.push(src);
