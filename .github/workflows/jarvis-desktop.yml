@@ -1,0 +1,41 @@
+name: Jarvis de escritorio
+
+on:
+  push:
+    paths: ["desktop/**", ".github/workflows/jarvis-desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - run: npm run dist
+      - name: Rename installer
+        shell: bash
+        run: mv dist/*Setup*.exe dist/Jarvis-Setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-Setup
+          path: desktop/dist/Jarvis-Setup.exe
+      - name: Publish as the "jarvis-latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: jarvis-latest
+          name: Jarvis de escritorio
+          body: Instalador de Jarvis para Windows. Bajá Jarvis-Setup.exe y abrilo.
+          prerelease: false
+          make_latest: true
+          files: desktop/dist/Jarvis-Setup.exe

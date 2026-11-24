@@ -1,11 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans, Syne } from "next/font/google";
 import "./globals.css";
 import { THEME_BOOT } from "@/lib/theme";
 
-const syne = Syne({ subsets: ["latin"], weight: ["600", "700"], variable: "--font-syne" });
-const plex = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex" });
-const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["500"], variable: "--font-plex-mono" });
+// Fonts load from Google at runtime (not at build time, where a failed download breaks the whole deploy).
+const FONTS = "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500&family=Syne:wght@600;700&display=swap";
 
 export const metadata: Metadata = {
   title: "HUB",
@@ -24,9 +22,12 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="es-AR" className={`${syne.variable} ${plex.variable} ${plexMono.variable}`} suppressHydrationWarning>
+    <html lang="es-AR" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link rel="stylesheet" href={FONTS} />
       </head>
       <body>{children}</body>
     </html>

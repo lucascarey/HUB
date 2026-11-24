@@ -2,7 +2,11 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
-export const SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+/** Gmail read-only (inbox box) + Calendar events (Jarvis reads and edits the agenda). */
+export const SCOPE = [
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
+].join(" ");
 
 const env = (k: string) => {
   const v = process.env[k];
@@ -97,6 +101,18 @@ export async function gmail<T>(access: string, path: string): Promise<T> {
   });
   if (!res.ok) throw new Error(`Gmail ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}`);
   return res.json() as Promise<T>;
+}
+
+/** Google Calendar API v3, primary calendar of the connected account. */
+export async function calendar<T>(access: string, path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/${path}`, {
+    method: init?.method ?? "GET",
+    headers: { authorization: `Bearer ${access}`, ...(init?.body ? { "content-type": "application/json" } : {}) },
+    body: init?.body ? JSON.stringify(init.body) : undefined,
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Calendar ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}`);
+  return (res.status === 204 ? null : res.json()) as Promise<T>;
 }
 
 export async function saveToken(userId: string, refreshToken: string, email: string) {
