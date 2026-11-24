@@ -206,7 +206,7 @@ function startCosmo(send) {
   const child = execFile(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
-    { windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, COSMO_MIN: process.env.COSMO_MIN || "0.4" } },
+    { windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, COSMO_MIN: process.env.COSMO_MIN || "0.25" } },
   );
   cosmo = child;
   let buf = "";

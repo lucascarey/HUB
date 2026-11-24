@@ -529,6 +529,9 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     if (m.type === "debug") {
       // Recognizer chatter (low-confidence hits, mic level): only the first few, enough to diagnose.
       if (cosmoDebug.current++ < 12) diag("cosmo-debug", m.line);
+      // Windows is shy about "Cosmo" with an Argentinian accent: a fairly sure hit on the name still wakes him.
+      const low = /^LOW ([\d.,]+) (cosmo|kosmo|cosmos)\b/i.exec(m.line);
+      if (low && Number(low[1].replace(",", ".")) >= 0.25) onCosmoRef.current({ type: "heard", only: true, confidence: Number(low[1].replace(",", ".")), wav: null });
       return;
     }
     diag(`cosmo-${m.type}`, m.type === "heard" ? { only: m.only, conf: m.confidence, wav: m.wav?.length ?? 0, phase: phaseRef.current, wake: wakeRef.current } : m);
@@ -543,6 +546,8 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     }
     if (m.type !== "heard" || !wakeRef.current || phaseRef.current !== "idle") return;
     setEmotion("sorprendido");
+    // A little "huh?" so Lucas knows he heard his name.
+    if (desktop()) chirp("x", "question", 2);
     void startLive(m.wav).then((ok) => {
       if (!ok) oneShot(m);
     });
