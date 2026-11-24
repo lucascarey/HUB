@@ -14,6 +14,18 @@ const OFF_AFTER = 10_000;
 const REMIND_BEFORE = 15 * 60_000;
 const SEEN_KEY = "jarvis-reminded";
 const GREET_KEY = "jarvis-greeted";
+const MAIL_KEY = "cosmo-mails-seen";
+const CURIOUS_KEY = "cosmo-curious";
+/** How often he checks for new important mail, and how often (at most) he asks something to get to know Lucas. */
+const MAIL_EVERY = 3 * 60_000;
+const CURIOUS_MIN = 45 * 60_000;
+const CURIOUS_MAX = 100 * 60_000;
+const CURIOUS_PER_DAY = 5;
+const CURIOUS_PROMPT =
+  "(Mensaje automático de la app, no lo escribió Lucas.) Es un buen momento para conocerlo mejor y armar su cerebro: " +
+  "mirá lo que ya recordás de él y hacele UNA pregunta corta y natural sobre algo que todavía no sepas o que convenga actualizar " +
+  "(sus proyectos, metas, rutinas, gustos, gente importante, pendientes, cómo viene con algo que te contó). Variá el tema. " +
+  "Solo la pregunta, con tu estilo, sin presentarte ni explicar por qué preguntás.";
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const pick = <T,>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)];
 
@@ -306,6 +318,81 @@ function Alive() {
       clearTimeout(first);
       clearInterval(every);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // New important mail: he pops up and tells Lucas who wrote and about what.
+  useEffect(() => {
+    const check = async () => {
+      if (phaseRef.current !== "idle") return;
+      const t = await bearer();
+      if (!t) return;
+      const res = await fetch("/api/mail", { headers: { authorization: `Bearer ${t}` } }).catch(() => null);
+      const json = res ? await res.json().catch(() => null) : null;
+      if (json?.status !== "ok") return;
+      const mails: { id: string; from: string; subject: string; date: number }[] = json.mails ?? [];
+      let seen: string[] | null = null;
+      try {
+        seen = JSON.parse(localStorage.getItem(MAIL_KEY) ?? "null");
+      } catch {}
+      const remember = (ids: string[]) => {
+        try {
+          localStorage.setItem(MAIL_KEY, JSON.stringify(ids.slice(-200)));
+        } catch {}
+      };
+      // First run: what's already there is old news.
+      if (!seen) return remember(mails.map((m) => m.id));
+      const fresh = mails.filter((m) => !seen!.includes(m.id) && Date.now() - m.date < 6 * 3600_000);
+      if (!fresh.length) return;
+      const m = fresh[0];
+      const text = fresh.length === 1
+        ? `Te llegó un mail de ${m.from}: “${m.subject}”.`
+        : `Te llegaron ${fresh.length} mails importantes. El último es de ${m.from}: “${m.subject}”.`;
+      wakeUp();
+      if (say(text, "asombrado")) remember([...seen, ...fresh.map((f) => f.id)]);
+    };
+    const first = setTimeout(check, 20_000);
+    const every = setInterval(check, MAIL_EVERY);
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Every so often he asks Lucas something to get to know him (and saves the answer as a memory),
+  // then listens right away so Lucas can just answer.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const plan = () => {
+      timer = setTimeout(run, rand(CURIOUS_MIN, CURIOUS_MAX));
+    };
+    const run = () => {
+      plan();
+      const h = new Date().getHours();
+      if (h < 9 || h >= 23 || phaseRef.current !== "idle" || moodRef.current === "hidden") return;
+      const today = new Date().toLocaleDateString("sv-SE");
+      let log = { day: today, n: 0 };
+      try {
+        const saved = JSON.parse(localStorage.getItem(CURIOUS_KEY) ?? "null");
+        if (saved?.day === today) log = saved;
+      } catch {}
+      if (log.n >= CURIOUS_PER_DAY) return;
+      try {
+        localStorage.setItem(CURIOUS_KEY, JSON.stringify({ day: today, n: log.n + 1 }));
+      } catch {}
+      wakeUp();
+      void jarvis.ask(CURIOUS_PROMPT).then(() => {
+        // Once he's done "saying" it, open the mic for the answer.
+        const listen = (tries: number) => {
+          if (phaseRef.current === "idle") return jarvis.mic();
+          if (tries > 0) setTimeout(() => listen(tries - 1), 1000);
+        };
+        setTimeout(() => listen(20), 1500);
+      });
+    };
+    plan();
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
