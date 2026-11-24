@@ -20,8 +20,8 @@ const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 // Tried in order when Google answers that a model does not exist.
 const FALLBACKS = ["gemini-flash-lite-latest", "gemini-2.5-flash"];
 /** Gemini sometimes hangs instead of failing: give up on a call after this and try the next model. */
-const CALL_MS = 30_000;
-const TOTAL_MS = 100_000;
+const CALL_MS = 12_000;
+const TOTAL_MS = 45_000;
 const retryable = (e: unknown) =>
   (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status === 403 || e.status >= 500)) ||
   /abort|timeout|timed out/i.test(String((e as Error)?.name) + String((e as Error)?.message));
@@ -52,7 +52,7 @@ function pensar(key: string): JarvisTool {
       "No lo uses para charla, datos simples, ni para usar las otras herramientas.",
     inputSchema,
     run: (async (q: z.infer<typeof inputSchema>) => {
-      const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta", httpOptions: { timeout: 45_000 } });
+      const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta", httpOptions: { timeout: 30_000 } });
       const proOk = Date.now() - proTiredAt > PRO_REST_MS;
       const models = [...(proOk ? PRO : []), MODEL];
       const text = `${q.pregunta}${q.contexto ? `\n\nContexto:\n${q.contexto}` : ""}\n\n${now()}`;

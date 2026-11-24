@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     ? steps.map((s, i) => `${i + 1}. ${String(s.action).slice(0, 300)} → ${s.ok ? "hecho" : "FALLÓ"}`).join("\n")
     : "(todavía nada)";
 
-  const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta", httpOptions: { timeout: 25000 } });
+  const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta", httpOptions: { timeout: 12000 } });
   const models = [...MODELS];
   for (;;) {
     try {
