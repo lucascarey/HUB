@@ -2,7 +2,7 @@ import { ApiError, GoogleGenAI, type Content, type Part } from "@google/genai";
 import { z } from "zod";
 import { supabaseAs, userFromRequest } from "@/lib/gmail-server";
 import { EMOTION_NAMES, isEmotion } from "@/lib/cozmo";
-import { jarvisTools, memoryDigest, todayISO, TZ, type Changed } from "@/lib/jarvis-tools";
+import { desktopTools, jarvisTools, memoryDigest, todayISO, TZ, type Changed, type DesktopAction } from "@/lib/jarvis-tools";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -43,7 +43,13 @@ Cómo trabajás:
 
 Tu vista:
 - A veces el mensaje de Lucas viene con una captura de su pantalla: es lo que tiene delante en ese momento. Usala para responder ("¿qué es esto?", "ayudame con este error"), mirando el detalle que importa y sin describir la pantalla entera.
-- Si te pregunta por algo de la pantalla y no vino captura, decile que eso lo podés ver desde la app de escritorio.`;
+- Si te pregunta por algo de la pantalla y no vino captura, decile que eso lo podés ver desde la app de escritorio.
+
+Tus manos (solo en la app de escritorio, cuando tenés las herramientas "escribir" y "abrir"):
+- "Escribí", "contestale", "redactame", "poneme acá" → armá el texto completo y usá "escribir": queda escrito donde Lucas tiene el cursor (y copiado). Escribilo como lo escribiría Lucas, en su tono, listo para mandar. Si hay captura, usala para entender a quién y qué contestar.
+- "Copiame" → "escribir" con pegar=false.
+- "Abrí", "buscá en Google", "poneme tal video" → "abrir" con el link.
+- Después de escribir, decí solo algo corto como "Listo, te lo dejé escrito." No leas el texto en voz alta.`;
 
 function now() {
   const fmt = new Intl.DateTimeFormat("es-AR", {
@@ -76,7 +82,7 @@ export async function POST(req: Request) {
   const owner = process.env.HUB_OWNER_ID;
   if (owner && user.id !== owner) return Response.json({ error: "forbidden" }, { status: 403 });
 
-  const body = (await req.json().catch(() => null)) as { turns?: Turn[]; screen?: string } | null;
+  const body = (await req.json().catch(() => null)) as { turns?: Turn[]; screen?: string; desktop?: boolean } | null;
   // Optional JPEG screenshot (base64) from the desktop app, for questions about what's on screen.
   const screen = typeof body?.screen === "string" && body.screen.length < 3_000_000 ? body.screen : null;
   const turns = (body?.turns ?? [])
@@ -89,7 +95,9 @@ export async function POST(req: Request) {
 
   const changed: Changed = { hub: false, calendar: false, memory: false };
   const sb = supabaseAs(user.token);
-  const tools = jarvisTools(sb, changed);
+  // What the desktop app should do on Lucas's computer once the answer arrives.
+  const actions: DesktopAction[] = [];
+  const tools = [...jarvisTools(sb, changed), ...(body?.desktop ? desktopTools(actions) : [])];
   const memory = await memoryDigest(sb);
   const byName = new Map(tools.map((t) => [t.name, t]));
   // v1beta: the "-latest" aliases and function calling live there (the SDK defaults to v1).
@@ -126,7 +134,7 @@ export async function POST(req: Request) {
       const calls = res.functionCalls ?? [];
       if (!calls.length) {
         const { text, emotion } = splitEmotion(res.text ?? "");
-        return Response.json({ text: text || "Listo.", emotion, changed });
+        return Response.json({ text: text || "Listo.", emotion, changed, actions });
       }
       // Keep the model's turn exactly as returned (it carries thought signatures Gemini needs back).
       const modelTurn = res.candidates?.[0]?.content;
@@ -152,7 +160,7 @@ export async function POST(req: Request) {
       }));
       contents.push({ role: "user", parts: results });
     }
-    return Response.json({ text: "Me trabé haciendo eso. Probá pedírmelo más simple.", changed });
+    return Response.json({ text: "Me trabé haciendo eso. Probá pedírmelo más simple.", changed, actions });
   } catch (e) {
     console.error("jarvis", e);
     if (e instanceof ApiError) {

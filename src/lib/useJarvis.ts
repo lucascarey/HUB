@@ -27,6 +27,10 @@ export interface DesktopBridge {
   hide(): void;
   /** JPEG (base64) of the main screen without Jarvis; missing in installers before 0.1.3. */
   screenshot?(): Promise<string | null>;
+  /** Types text where Lucas's cursor is (or only copies it); missing before 0.1.4. */
+  write?(text: string, paste: boolean): Promise<boolean>;
+  /** Opens a link in the normal browser; missing before 0.1.4. */
+  openUrl?(url: string): void;
 }
 
 /** Questions about what Lucas has in front of him: those go with a screenshot in the desktop app. */
@@ -356,9 +360,13 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       const res = await fetch("/api/jarvis", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
-        body: JSON.stringify({ turns: turnsRef.current, ...(screen ? { screen } : {}) }),
+        body: JSON.stringify({ turns: turnsRef.current, ...(screen ? { screen } : {}), ...(d?.write ? { desktop: true } : {}) }),
       });
       const json = await res.json().catch(() => ({}));
+      for (const a of Array.isArray(json.actions) ? json.actions : []) {
+        if (a?.type === "write" && typeof a.text === "string") await d?.write?.(a.text, a.paste !== false).catch(() => false);
+        else if (a?.type === "open" && typeof a.url === "string") d?.openUrl?.(a.url);
+      }
       if (json.text) {
         reply = json.text;
         setEmotion(typeof json.emotion === "string" && isEmotion(json.emotion) ? json.emotion : "normal");

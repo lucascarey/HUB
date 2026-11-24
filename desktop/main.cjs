@@ -1,6 +1,7 @@
 // Jarvis de escritorio: a transparent, always-on-top window where Jarvis's face lives,
 // starting with Windows. The face and its behaviour come from the HUB's /compa page.
-const { app, BrowserWindow, desktopCapturer, ipcMain, screen, shell, Tray, Menu, nativeImage, session } = require("electron");
+const { execFile } = require("child_process");
+const { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, screen, shell, Tray, Menu, nativeImage, session } = require("electron");
 const path = require("path");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 
@@ -122,6 +123,23 @@ async function screenshot() {
   }
 }
 
+/** Leaves the text on the clipboard and, with paste, types it where the cursor is (Ctrl+V into the active app). */
+async function write(text, paste) {
+  clipboard.writeText(text);
+  if (!paste || process.platform !== "win32") return true;
+  // If Lucas clicked the head to talk, Jarvis has the focus: give it back to the app he was using.
+  if (win && win.isFocused()) win.blur();
+  await new Promise((r) => setTimeout(r, 250));
+  return new Promise((resolve) => {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"],
+      { windowsHide: true, timeout: 8000 },
+      (err) => resolve(!err),
+    );
+  });
+}
+
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icon.png")).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
@@ -167,6 +185,10 @@ app.whenReady().then(() => {
   ipcMain.on("open-hub", (_e, p) => shell.openExternal(HUB + (typeof p === "string" ? p : "/")));
   ipcMain.on("hide", () => win && win.hide());
   ipcMain.handle("screenshot", () => screenshot());
+  ipcMain.handle("write", (_e, text, paste) => write(String(text).slice(0, 8000), !!paste));
+  ipcMain.on("open-url", (_e, url) => {
+    if (/^https?:\/\//i.test(String(url))) void shell.openExternal(String(url));
+  });
 
   createWindow();
   createTray();

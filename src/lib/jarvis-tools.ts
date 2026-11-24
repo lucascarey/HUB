@@ -17,6 +17,9 @@ const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha YYYY-MM-DD
 /** Something the assistant changed, so the app knows to reload. */
 export type Changed = { hub: boolean; calendar: boolean; memory: boolean };
 
+/** Something the desktop app does on Lucas's computer after the answer arrives. */
+export type DesktopAction = { type: "write"; text: string; paste: boolean } | { type: "open"; url: string };
+
 const json = (v: unknown) => JSON.stringify(v);
 
 /** One thing Jarvis can do: a name and description for the model, a zod schema for its arguments, and the code. */
@@ -401,4 +404,33 @@ function plusHour(v: string) {
   const t = new Date(`${v.slice(0, 16)}:00Z`);
   t.setUTCHours(t.getUTCHours() + 1);
   return t.toISOString().slice(0, 16);
+}
+
+/** Tools that act on Lucas's computer; only offered when the request comes from the desktop app. */
+export function desktopTools(actions: DesktopAction[]): JarvisTool[] {
+  return [
+    tool({
+      name: "escribir",
+      description:
+        "Escribe un texto en la compu de Lucas, donde tenga el cursor (un mail, un mensaje, un documento), y lo deja copiado. Usalo cuando te pida que escribas, contestes o redactes algo. pegar=false solo lo copia.",
+      inputSchema: z.object({
+        texto: z.string().min(1).max(8000),
+        pegar: z.boolean().optional().describe("false = solo copiar, sin escribirlo"),
+      }),
+      run: async (q) => {
+        actions.push({ type: "write", text: q.texto, paste: q.pegar !== false });
+        return q.pegar === false ? "Copiado." : "Escrito donde está el cursor (y copiado).";
+      },
+    }),
+    tool({
+      name: "abrir",
+      description: "Abre un link en el navegador de Lucas: una página, una búsqueda de Google o YouTube, un mail de Gmail.",
+      inputSchema: z.object({ url: z.string().url() }),
+      run: async (q) => {
+        if (!/^https?:\/\//i.test(q.url)) return "Solo puedo abrir links http o https.";
+        actions.push({ type: "open", url: q.url });
+        return "Abierto.";
+      },
+    }),
+  ];
 }

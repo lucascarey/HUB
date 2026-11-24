@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld("jarvisDesktop", {
   openHub: (path) => ipcRenderer.send("open-hub", path || "/"),
   hide: () => ipcRenderer.send("hide"),
   screenshot: () => ipcRenderer.invoke("screenshot"),
+  write: (text, paste) => ipcRenderer.invoke("write", String(text), paste !== false),
+  openUrl: (url) => ipcRenderer.send("open-url", String(url)),
 });
