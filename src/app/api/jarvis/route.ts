@@ -18,7 +18,13 @@ let proTiredAt = 0;
 // "gemini-flash-latest" follows Google's current Flash model, which the free tier of AI Studio includes.
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 // Tried in order when Google answers that a model does not exist.
-const FALLBACKS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-lite-latest"];
+const FALLBACKS = ["gemini-flash-lite-latest", "gemini-2.5-flash"];
+/** Gemini sometimes hangs instead of failing: give up on a call after this and try the next model. */
+const CALL_MS = 30_000;
+const TOTAL_MS = 100_000;
+const retryable = (e: unknown) =>
+  (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status === 403 || e.status >= 500)) ||
+  /abort|timeout|timed out/i.test(String((e as Error)?.name) + String((e as Error)?.message));
 const MAX_STEPS = 8;
 
 /** "[feliz] Listo." → emotion "feliz" and the text without the tag. */
@@ -46,7 +52,7 @@ function pensar(key: string): JarvisTool {
       "No lo uses para charla, datos simples, ni para usar las otras herramientas.",
     inputSchema,
     run: (async (q: z.infer<typeof inputSchema>) => {
-      const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
+      const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta", httpOptions: { timeout: 45_000 } });
       const proOk = Date.now() - proTiredAt > PRO_REST_MS;
       const models = [...(proOk ? PRO : []), MODEL];
       const text = `${q.pregunta}${q.contexto ? `\n\nContexto:\n${q.contexto}` : ""}\n\n${now()}`;
@@ -55,10 +61,10 @@ function pensar(key: string): JarvisTool {
           const res = await ai.models.generateContent({ model: models[0], contents: text, config: { systemInstruction: THINKER } });
           return res.text?.trim() || "No llegué a ninguna conclusión.";
         } catch (e) {
-          if (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status === 403 || e.status >= 500) && models.length > 1) {
+          if (retryable(e) && models.length > 1) {
             const failed = models.shift()!;
-            if (PRO.includes(failed) && e.status === 429) proTiredAt = Date.now();
-            console.warn("pensar model unavailable, trying next", failed, e.status);
+            if (PRO.includes(failed) && !(e instanceof ApiError && e.status === 404)) proTiredAt = Date.now();
+            console.warn("pensar model unavailable, trying next", failed, e instanceof ApiError ? e.status : String(e).slice(0, 80));
             continue;
           }
           throw e;
@@ -104,8 +110,9 @@ export async function POST(req: Request) {
   const memory = await memoryDigest(sb);
   const byName = new Map(tools.map((t) => [t.name, t]));
   // v1beta: the "-latest" aliases and function calling live there (the SDK defaults to v1).
-  const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
+  const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta", httpOptions: { timeout: CALL_MS } });
   const models = [...new Set([MODEL, ...FALLBACKS])];
+  const started = Date.now();
   const config = {
     systemInstruction: `${SYSTEM}${body?.openMic ? OPEN_MIC : ""}\n\nLo que recordás de Lucas:\n${memory}\n\n${now()}`,
     tools: [{
@@ -121,6 +128,7 @@ export async function POST(req: Request) {
 
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
+      if (Date.now() - started > TOTAL_MS) break;
       let res;
       for (;;) {
         try {
@@ -128,10 +136,9 @@ export async function POST(req: Request) {
           break;
         } catch (e) {
           // Not available (404) or saturated right now (429/5xx): the next free model answers.
-          if (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status === 403 || e.status >= 500) && models.length > 1) {
+          if (retryable(e) && models.length > 1) {
             const failed = models.shift()!;
-            if (PRO.includes(failed) && e.status === 429) proTiredAt = Date.now();
-            console.warn("jarvis model unavailable, trying next", failed, e.status);
+            console.warn("jarvis model unavailable, trying next", failed, e instanceof ApiError ? e.status : String(e).slice(0, 80));
             continue;
           }
           throw e;

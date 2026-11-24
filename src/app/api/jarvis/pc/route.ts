@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // Each step needs a quick look at the screen: Flash is fast and its free quota is big enough for many steps.
-const MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-pro-latest", "gemini-flash-lite-latest"];
+const MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-pro-latest"];
 
 const PROMPT = `Sos las manos de Cosmo, el compañero de escritorio de Lucas, en su compu con Windows.
 Tenés que lograr un objetivo usando el mouse y el teclado, de a un paso por vez. Recibís una captura de la pantalla actual
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     ? steps.map((s, i) => `${i + 1}. ${String(s.action).slice(0, 300)} → ${s.ok ? "hecho" : "FALLÓ"}`).join("\n")
     : "(todavía nada)";
 
-  const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
+  const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta", httpOptions: { timeout: 25000 } });
   const models = [...MODELS];
   for (;;) {
     try {
@@ -77,8 +77,8 @@ export async function POST(req: Request) {
       if (!action || typeof action.type !== "string") return Response.json({ action: { type: "fail", texto: "Me perdí mirando la pantalla." } });
       return Response.json({ action });
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status >= 500) && models.length > 1) {
-        console.warn("pc model unavailable, trying next", models.shift(), e.status);
+      if (((e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status >= 500)) || /abort|timeout/i.test(String(e))) && models.length > 1) {
+        console.warn("pc model unavailable, trying next", models.shift(), e instanceof ApiError ? e.status : "timeout");
         continue;
       }
       console.error("pc", e);
