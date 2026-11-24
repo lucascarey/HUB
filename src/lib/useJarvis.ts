@@ -23,6 +23,8 @@ interface SR {
 export interface DesktopBridge {
   speak(text: string): Promise<ArrayBuffer | null>;
   moveTo(x: number, y: number, ms?: number): void;
+  /** Puts the window there right away (every frame while moving); missing before 0.1.8. */
+  place?(x: number, y: number): void;
   workArea(): Promise<{ x: number; y: number; width: number; height: number; winW: number; winH: number }>;
   setClickable(on: boolean): void;
   openHub(path?: string): void;
@@ -355,6 +357,12 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       return false;
     });
     diag("live-start", { ok, err: chat.lastError, phrase: !!firstPhraseWav });
+    // If the microphone only delivers silence, say so: it's a Windows setting, not something Cosmo can fix.
+    if (ok) setTimeout(() => {
+      if (live.current !== chat || chat.micPeak > 0.003) return;
+      diag("mic-silent", { chunks: chat.micChunks, peak: chat.micPeak });
+      setNote("Tu micrófono me llega en silencio. Revisá en Windows: Privacidad > Micrófono > “Permitir que las apps de escritorio accedan”, y que en Sonido > Entrada esté el micrófono correcto.");
+    }, 6000);
     if (!ok) {
       live.current = null;
       liveFailedAt.current = Date.now();

@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("jarvisDesktop", {
   speak: (text) => ipcRenderer.invoke("speak", text),
   moveTo: (x, y, ms) => ipcRenderer.send("move-to", x, y, ms),
+  place: (x, y) => ipcRenderer.send("place", x, y),
   workArea: () => ipcRenderer.invoke("work-area"),
   setClickable: (on) => ipcRenderer.send("clickable", !!on),
   openHub: (path) => ipcRenderer.send("open-hub", path || "/"),

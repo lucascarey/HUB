@@ -279,6 +279,12 @@ app.whenReady().then(() => {
   ipcMain.handle("speak", (_e, text) => speak(text));
   ipcMain.handle("work-area", () => ({ ...workArea(), winW: WIN_W, winH: WIN_H }));
   ipcMain.on("move-to", (_e, x, y, ms) => moveTo(x, y, ms));
+  // Every-frame placement (dragging, throwing, zero-g drift): straight to the spot, no animation timer.
+  ipcMain.on("place", (_e, x, y) => {
+    if (!win) return;
+    clearInterval(anim);
+    win.setPosition(Math.round(x), Math.round(y));
+  });
   ipcMain.on("clickable", (_e, on) => win && win.setIgnoreMouseEvents(!on, { forward: true }));
   ipcMain.on("open-hub", (_e, p) => shell.openExternal(HUB + (typeof p === "string" ? p : "/")));
   ipcMain.on("hide", () => win && win.hide());

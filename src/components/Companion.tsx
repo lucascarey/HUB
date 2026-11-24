@@ -78,6 +78,16 @@ function Alive() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Moves the window right now, only when it lands on a new pixel (older installers: the animated move). */
+  const placed = useRef({ x: NaN, y: NaN });
+  const place = useCallback((x: number, y: number) => {
+    const rx = Math.round(x), ry = Math.round(y);
+    if (rx === placed.current.x && ry === placed.current.y) return;
+    placed.current = { x: rx, y: ry };
+    if (d?.place) d.place(rx, ry);
+    else d?.moveTo(rx, ry, 0);
+  }, [d]);
+
   const go = useCallback((x: number, y: number, ms = 900) => {
     if (hovered.current) return;
     pos.current = { x, y };
@@ -141,7 +151,7 @@ function Alive() {
           wander = { x: Math.cos(ang), y: Math.sin(ang) * 0.7 };
           nextWander = now + rand(8000, 20_000);
         }
-        const target = 16;
+        const target = 28;
         if (Math.hypot(v.x, v.y) < target * 1.5) {
           v.x += (wander.x * target - v.x) * 0.4 * dt;
           v.y += (wander.y * target - v.y) * 0.4 * dt;
@@ -169,7 +179,7 @@ function Alive() {
         setTimeout(() => setFlash(null), 1400);
       }
       pos.current = { x, y };
-      d.moveTo(Math.round(x), Math.round(y), 0);
+      place(x, y);
       const nearTop = y + r.top < a.y + 170;
       if (nearTop !== belowRef.current && (nearTop || y + r.top > a.y + 230)) {
         belowRef.current = nearTop;
@@ -180,7 +190,7 @@ function Alive() {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [d]);
+  }, [d, place]);
 
   // When the balloon flips, the head moves inside the window: move the window the other way so he stays put.
   useLayoutEffect(() => {
@@ -190,8 +200,8 @@ function Alive() {
     headTopBefore.current = null;
     const shift = head.getBoundingClientRect().top - before;
     pos.current = { x: pos.current.x, y: pos.current.y - shift };
-    d?.moveTo(Math.round(pos.current.x), Math.round(pos.current.y), 0);
-  }, [below, d]);
+    place(pos.current.x, pos.current.y);
+  }, [below, place]);
 
   // Most of the time he looks around on his own; every so often he follows the mouse for a few seconds,
   // and he always notices it when it comes close.
@@ -375,7 +385,7 @@ function Alive() {
           g.moved = true;
           g.trail = [...g.trail.filter((p) => e.timeStamp - p.t < 120), { x: e.screenX, y: e.screenY, t: e.timeStamp }];
           pos.current = { x: g.wx + dx, y: g.wy + dy };
-          d?.moveTo(Math.round(g.wx + dx), Math.round(g.wy + dy), 0);
+          place(g.wx + dx, g.wy + dy);
         }}
         onPointerUp={(e) => {
           const g = drag.current;
