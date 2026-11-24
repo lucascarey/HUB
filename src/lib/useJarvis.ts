@@ -32,6 +32,8 @@ export interface DesktopBridge {
   write?(text: string, paste: boolean): Promise<boolean>;
   /** Opens a link in the normal browser; missing before 0.1.4. */
   openUrl?(url: string): void;
+  /** Mouse position relative to the centre of Cosmo's window (px); missing before 0.1.6. */
+  gaze?(): Promise<{ dx: number; dy: number } | null>;
   /** Listens for "Cosmo, …" with Windows' speech recognizer; returns the stop function. Missing before 0.1.5. */
   onCosmo?(cb: (m: CosmoEvent) => void): () => void;
 }

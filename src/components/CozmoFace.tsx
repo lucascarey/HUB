@@ -11,6 +11,10 @@ interface Props {
   /** CSS pixel width; the face keeps a 2:1 ratio. */
   size?: number;
   className?: string;
+  /** Squarer eyes (the desktop Cosmo). */
+  square?: boolean;
+  /** Where to look, -1..1 on each axis (null = glance around on his own). Read every frame. */
+  gaze?: { current: { x: number; y: number } | null };
 }
 
 const W = 128, H = 64, EYE = 40, GAP = 4;
@@ -20,12 +24,14 @@ const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
  * Cozmo's face: two glowing eyes that morph between emotions, blink on their own, glance around,
  * and react to listening / thinking / speaking.
  */
-export default function CozmoFace({ emotion, mode = "idle", size = 220, className }: Props) {
+export default function CozmoFace({ emotion, mode = "idle", size = 220, className, square = false, gaze }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const target = useRef<Emotion>(emotion);
   const modeRef = useRef<FaceMode>(mode);
+  const squareRef = useRef(square);
   target.current = emotion;
   modeRef.current = mode;
+  squareRef.current = square;
 
   useEffect(() => {
     const el = canvas.current;
@@ -78,7 +84,14 @@ export default function CozmoFace({ emotion, mode = "idle", size = 220, classNam
       }
 
       // Glance around when idle; look up while thinking; centre while listening.
-      if (now > nextLook && !reduce) {
+      const g = gaze?.current;
+      if (g && m !== "thinking" && !reduce) {
+        // Following something (the mouse): track it smoothly, no jumps.
+        lookTo = { x: Math.max(-1, Math.min(1, g.x)) * 14, y: Math.max(-1, Math.min(1, g.y)) * 7 };
+        lookFrom = look;
+        lookStart = now - 130;
+        nextLook = now + 1200;
+      } else if (now > nextLook && !reduce) {
         lookFrom = look;
         lookTo = m === "thinking" ? { x: (Math.random() - 0.5) * 10, y: -6 }
           : m === "listening" ? { x: 0, y: 0 }
@@ -109,14 +122,18 @@ export default function CozmoFace({ emotion, mode = "idle", size = 220, classNam
       ];
       for (const [x, cfg, mirrored] of eyes) {
         const o = orient(cfg, mirrored);
-        eyePath(ctx, x, cy, { ...o, height: Math.max(1.5, o.height * lid * grow), width: o.width * grow });
+        const r = squareRef.current ? 0.4 : 1;
+        eyePath(ctx, x, cy, {
+          ...o, height: Math.max(1.5, o.height * lid * grow), width: o.width * grow,
+          radiusTop: o.radiusTop * r, radiusBottom: o.radiusBottom * r,
+        });
         ctx.fill();
       }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [gaze]);
 
   return (
     <canvas

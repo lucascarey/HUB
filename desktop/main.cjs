@@ -282,6 +282,13 @@ app.whenReady().then(() => {
   ipcMain.on("open-hub", (_e, p) => shell.openExternal(HUB + (typeof p === "string" ? p : "/")));
   ipcMain.on("hide", () => win && win.hide());
   ipcMain.handle("screenshot", () => screenshot());
+  // Where the mouse is, relative to the centre of Cosmo's window: his eyes follow it.
+  ipcMain.handle("gaze", () => {
+    if (!win) return null;
+    const p = screen.getCursorScreenPoint();
+    const [x, y] = win.getPosition();
+    return { dx: p.x - (x + WIN_W / 2), dy: p.y - (y + WIN_H / 2) };
+  });
   ipcMain.on("cosmo-start", (e) => startCosmo((m) => !e.sender.isDestroyed() && e.sender.send("cosmo", m)));
   ipcMain.on("cosmo-stop", () => stopCosmo());
   ipcMain.handle("write", (_e, text, paste) => write(String(text).slice(0, 8000), !!paste));

@@ -21,8 +21,7 @@ async function bearer() {
 }
 
 /**
- * Jarvis as a desktop companion: a small head with Cozmo's eyes that wanders along the bottom of the
- * screen, peeks, falls asleep, hides, wakes up with "Cosmo, …", and speaks up on its own for
+ * Cosmo as a desktop companion: a small boxy head that hovers around the screen watching the mouse, peeks, falls asleep, hides, wakes up with "Cosmo, …", and speaks up on its own for
  * upcoming events and a morning hello. Movement only happens inside the Windows app.
  */
 export default function Companion() {
@@ -67,18 +66,42 @@ function Alive() {
     d?.moveTo(Math.round(x), Math.round(y), ms);
   }, [d]);
 
-  /** Spots along the bottom edge: fully visible, peeking (half sunk) or gone. */
-  const spot = useCallback((where: "show" | "peek" | "sleep" | "hide", x?: number) => {
+  /**
+   * Where he goes: floating anywhere on the screen ("float", slow), back down to the bottom edge ("show"),
+   * peeking (half sunk), asleep (lower) or gone.
+   */
+  const spot = useCallback((where: "float" | "show" | "peek" | "sleep" | "hide", x?: number, fy?: number) => {
     const a = area.current;
     if (!a) return;
     const nx = x ?? pos.current.x;
     const bottom = a.y + a.height;
-    const y = where === "show" ? bottom - a.winH
+    const y = where === "float" ? (fy ?? pos.current.y)
+      : where === "show" ? bottom - a.winH
       : where === "peek" ? bottom - a.winH * 0.55
       : where === "sleep" ? bottom - a.winH * 0.42
       : bottom + 4;
-    go(Math.max(a.x, Math.min(a.x + a.width - a.winW, nx)), y, where === "hide" ? 700 : 1100);
+    const cx = Math.max(a.x, Math.min(a.x + a.width - a.winW, nx));
+    const cy = Math.max(a.y, Math.min(bottom + 4, y));
+    const dist = Math.hypot(cx - pos.current.x, cy - pos.current.y);
+    const ms = where === "hide" ? 700 : where === "float" ? Math.min(5200, 1400 + dist * 3.2) : 1100;
+    go(cx, cy, ms);
   }, [go]);
+
+  // His eyes follow the mouse around the screen (a few times a second, smoothed in the face).
+  const gaze = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!d?.gaze) return;
+    const t = setInterval(() => {
+      if (moodRef.current !== "awake") return void (gaze.current = null);
+      void d.gaze!().then((g) => {
+        if (!g) return;
+        const far = Math.hypot(g.dx, g.dy);
+        // Very close (over his own head) or idle far away for long: let him glance on his own.
+        gaze.current = far < 40 ? null : { x: g.dx / 500, y: g.dy / 350 };
+      }).catch(() => {});
+    }, 120);
+    return () => clearInterval(t);
+  }, [d]);
 
   const setM = useCallback((m: Mood) => {
     moodRef.current = m;
@@ -123,7 +146,7 @@ function Alive() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
-      timer = setTimeout(tick, rand(14_000, 45_000));
+      timer = setTimeout(tick, rand(7_000, 20_000));
       if (phase !== "idle" || moodRef.current === "hidden") return;
       const idle = Date.now() - lastActive.current;
       if (moodRef.current === "awake" && idle > SLEEP_AFTER) {
@@ -134,8 +157,8 @@ function Alive() {
       }
       if (moodRef.current !== "awake") return;
       const a = area.current;
-      const act = pick(["wander", "wander", "glance", "glance", "peek", "yawn", "stay"]);
-      if (act === "wander" && a) spot("show", rand(a.x + a.width * 0.45, a.x + a.width - a.winW - 16));
+      const act = pick(["float", "float", "float", "glance", "glance", "peek", "yawn", "stay"]);
+      if (act === "float" && a) spot("float", rand(a.x, a.x + a.width - a.winW), rand(a.y + 20, a.y + a.height - a.winH));
       else if (act === "peek" && a) {
         spot("peek");
         setTimeout(() => moodRef.current === "awake" && spot("show"), rand(5000, 11000));
@@ -230,7 +253,7 @@ function Alive() {
         }}
         title="Clic: hablar · Doble clic: esconderme · Clic derecho: abrir el HUB"
       >
-        <CozmoFace emotion={shown} mode={mood === "asleep" ? "idle" : phase} size={170} />
+        <CozmoFace emotion={shown} mode={mood === "asleep" ? "idle" : phase} size={170} square gaze={gaze} />
       </button>
       {jarvis.note && <p className="compa-note">{jarvis.note}</p>}
     </div>
