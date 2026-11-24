@@ -1,4 +1,4 @@
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI, EndSensitivity, Modality } from "@google/genai";
 import { z } from "zod";
 import { supabaseAs, userFromRequest } from "@/lib/gmail-server";
 import { liveSystem, schemaFor } from "@/lib/jarvis-brain";
@@ -53,6 +53,10 @@ export async function POST(req: Request) {
             systemInstruction: liveSystem(memory),
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } },
             inputAudioTranscription: {},
+            // Lucas can pause to think mid-sentence without being cut off.
+            realtimeInputConfig: {
+              automaticActivityDetection: { endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW, silenceDurationMs: 900, prefixPaddingMs: 300 },
+            },
             outputAudioTranscription: {},
             tools: [{
               functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: schemaFor(t.inputSchema) })),

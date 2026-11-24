@@ -175,7 +175,12 @@ $eng.EndSilenceTimeoutAmbiguous = [TimeSpan]::FromMilliseconds(1200)
 [Console]::Out.WriteLine('READY ' + $info.Culture.Name)
 while ($true) {
   $r = $eng.Recognize([TimeSpan]::FromSeconds(30))
-  if (-not $r) { [Console]::Out.WriteLine('LEVEL ' + $eng.AudioLevel + ' ' + $eng.AudioState); continue }
+  if (-not $r) {
+    [Console]::Out.WriteLine('LEVEL ' + $eng.AudioLevel + ' ' + $eng.AudioState)
+    # The default microphone may have changed in Windows since: listen to the current one.
+    try { $eng.SetInputToDefaultAudioDevice() } catch {}
+    continue
+  }
   $first = $r.Words | Select-Object -First 1
   $conf = if ($first) { $first.Confidence } else { $r.Confidence }
   if ($conf -lt $env:COSMO_MIN) { [Console]::Out.WriteLine('LOW ' + [Math]::Round($conf, 2) + ' ' + $r.Text); continue }
