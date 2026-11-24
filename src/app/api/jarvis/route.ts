@@ -2,15 +2,16 @@ import { ApiError, GoogleGenAI, type Content, type Part } from "@google/genai";
 import { supabaseAs, userFromRequest } from "@/lib/gmail-server";
 import { isEmotion } from "@/lib/cozmo";
 import { now, schemaFor, SYSTEM } from "@/lib/jarvis-brain";
-import { desktopTools, jarvisTools, memoryDigest, type Changed, type DesktopAction } from "@/lib/jarvis-tools";
+import { z } from "zod";
+import { desktopTools, jarvisTools, memoryDigest, type Changed, type DesktopAction, type JarvisTool } from "@/lib/jarvis-tools";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 type Turn = { role: "user" | "assistant"; text: string };
 
-// Cosmo thinks with Gemini Pro (smarter, more personality). Its free quota is small, so when Google says
-// it's used up he answers with Flash for a while instead of failing.
+// Cosmo answers with Flash (fast) and hands the hard thinking to Gemini Pro through the "pensar" tool.
+// Pro's free quota is small, so when Google says it's used up, "pensar" uses Flash for a while.
 const PRO = ["gemini-pro-latest", "gemini-2.5-pro"];
 const PRO_REST_MS = 10 * 60_000;
 let proTiredAt = 0;
@@ -25,6 +26,46 @@ function splitEmotion(raw: string) {
   const m = raw.trim().match(/^\[([a-záéíóú]+)\]\s*/i);
   const name = m?.[1].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ?? "";
   return { text: (m ? raw.trim().slice(m[0].length) : raw).trim(), emotion: isEmotion(name) ? name : "normal" };
+}
+
+const THINKER = `Sos la parte pensante de Cosmo, el compañero de Lucas (Argentina). Te pasan un problema, una pregunta difícil
+o un pedido de ideas. Pensalo a fondo y devolvé la respuesta lista para usar: concreta, con criterio propio, ideas originales o
+pasos claros, en castellano rioplatense. Sin introducciones ni relleno; máximo unas 180 palabras salvo que haga falta más.`;
+
+/** "pensar": Gemini Pro (with its thinking) for problems, ideas, plans and decisions; Flash if Pro is out of quota. */
+function pensar(key: string): JarvisTool {
+  const inputSchema = z.object({
+    pregunta: z.string().min(3).max(4000).describe("Lo que hay que pensar, completo y concreto"),
+    contexto: z.string().max(6000).optional().describe("Datos útiles: lo que recordás de Lucas, del HUB, de la charla"),
+  });
+  return {
+    name: "pensar",
+    description:
+      "Pensá a fondo con el modelo más inteligente (Gemini Pro). Usalo para lo que pide pensamiento de verdad: resolver un problema, " +
+      "dar ideas, planear, decidir entre opciones, analizar, explicar algo complejo, escribir algo largo y cuidado. " +
+      "No lo uses para charla, datos simples, ni para usar las otras herramientas.",
+    inputSchema,
+    run: (async (q: z.infer<typeof inputSchema>) => {
+      const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
+      const proOk = Date.now() - proTiredAt > PRO_REST_MS;
+      const models = [...(proOk ? PRO : []), MODEL];
+      const text = `${q.pregunta}${q.contexto ? `\n\nContexto:\n${q.contexto}` : ""}\n\n${now()}`;
+      for (;;) {
+        try {
+          const res = await ai.models.generateContent({ model: models[0], contents: text, config: { systemInstruction: THINKER } });
+          return res.text?.trim() || "No llegué a ninguna conclusión.";
+        } catch (e) {
+          if (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status === 403 || e.status >= 500) && models.length > 1) {
+            const failed = models.shift()!;
+            if (PRO.includes(failed) && e.status === 429) proTiredAt = Date.now();
+            console.warn("pensar model unavailable, trying next", failed, e.status);
+            continue;
+          }
+          throw e;
+        }
+      }
+    }) as JarvisTool["run"],
+  };
 }
 
 /** Jarvis: Gemini with tools over the signed-in person's HUB, Gmail and Google Calendar. */
@@ -52,13 +93,12 @@ export async function POST(req: Request) {
   const sb = supabaseAs(user.token);
   // What the desktop app should do on Lucas's computer once the answer arrives.
   const actions: DesktopAction[] = [];
-  const tools = [...jarvisTools(sb, changed), ...(body?.desktop ? desktopTools(actions) : [])];
+  const tools = [...jarvisTools(sb, changed), ...(body?.desktop ? desktopTools(actions) : []), pensar(key)];
   const memory = await memoryDigest(sb);
   const byName = new Map(tools.map((t) => [t.name, t]));
   // v1beta: the "-latest" aliases and function calling live there (the SDK defaults to v1).
   const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
-  const proOk = Date.now() - proTiredAt > PRO_REST_MS;
-  const models = [...new Set([...(proOk ? PRO : []), MODEL, ...FALLBACKS])];
+  const models = [...new Set([MODEL, ...FALLBACKS])];
   const config = {
     systemInstruction: `${SYSTEM}\n\nLo que recordás de Lucas:\n${memory}\n\n${now()}`,
     tools: [{
