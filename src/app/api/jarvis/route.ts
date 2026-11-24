@@ -68,6 +68,13 @@ function pensar(key: string): JarvisTool {
   };
 }
 
+/** The last message came from the open microphone, which also picks up people talking nearby, the TV, etc. */
+const OPEN_MIC = `
+
+Micrófono abierto: el último mensaje lo transcribió el micrófono, que también capta a otras personas, la tele o ruido.
+Si no parece dirigido a vos (una charla con otra persona, frases sueltas sin sentido, algo de fondo), respondé exactamente: [ignorar]
+y nada más. Ante la duda, si es una pregunta o un pedido que vos podrías resolver, respondé normalmente.`;
+
 /** Jarvis: Gemini with tools over the signed-in person's HUB, Gmail and Google Calendar. */
 export async function POST(req: Request) {
   const key = process.env.GEMINI_API_KEY;
@@ -78,7 +85,7 @@ export async function POST(req: Request) {
   const owner = process.env.HUB_OWNER_ID;
   if (owner && user.id !== owner) return Response.json({ error: "forbidden" }, { status: 403 });
 
-  const body = (await req.json().catch(() => null)) as { turns?: Turn[]; screen?: string; desktop?: boolean } | null;
+  const body = (await req.json().catch(() => null)) as { turns?: Turn[]; screen?: string; desktop?: boolean; openMic?: boolean } | null;
   // Optional JPEG screenshot (base64) from the desktop app, for questions about what's on screen.
   const screen = typeof body?.screen === "string" && body.screen.length < 3_000_000 ? body.screen : null;
   const turns = (body?.turns ?? [])
@@ -100,7 +107,7 @@ export async function POST(req: Request) {
   const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
   const models = [...new Set([MODEL, ...FALLBACKS])];
   const config = {
-    systemInstruction: `${SYSTEM}\n\nLo que recordás de Lucas:\n${memory}\n\n${now()}`,
+    systemInstruction: `${SYSTEM}${body?.openMic ? OPEN_MIC : ""}\n\nLo que recordás de Lucas:\n${memory}\n\n${now()}`,
     tools: [{
       functionDeclarations: tools.map((t) => ({
         name: t.name,
@@ -132,6 +139,7 @@ export async function POST(req: Request) {
       }
       const calls = res.functionCalls ?? [];
       if (!calls.length) {
+        if (body?.openMic && /^\s*\[?ignorar\]?\.?\s*$/i.test(res.text ?? "")) return Response.json({ text: "[ignorar]", emotion: "normal", changed, actions });
         const { text, emotion } = splitEmotion(res.text ?? "");
         return Response.json({ text: text || "Listo.", emotion, changed, actions, model: models[0] });
       }

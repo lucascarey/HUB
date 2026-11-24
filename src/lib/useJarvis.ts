@@ -352,8 +352,21 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       chat.hold(true);
       setP("thinking");
       setEmotion("concentrado");
-      const { reply: said, mood } = await answer(text);
+      const { reply: said, mood } = await answer(text, true);
       if (live.current !== chat) return void chat.hold(false);
+      // Background talk, not for him: forget it and keep listening.
+      if (/^\[?ignorar\]?\.?$/i.test(said.trim())) {
+        const last = turnsRef.current[turnsRef.current.length - 1];
+        if (last?.role === "user" && last.text === text) {
+          turnsRef.current = turnsRef.current.slice(0, -1);
+          setTurns(turnsRef.current);
+        }
+        diag("ignored", text.slice(0, 80));
+        setInterim("");
+        setEmotion("normal");
+        chat.hold(false);
+        return setP("listening");
+      }
       push({ role: "assistant", text: said });
       setEmotion(mood as Emotion);
       setP("speaking");
@@ -624,7 +637,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   };
 
   /** Cosmo's answer to the conversation so far (the last turn is Lucas's question), from Gemini Pro on the server. */
-  const answer = async (question: string) => {
+  const answer = async (question: string, openMic = false) => {
     let reply = "";
     let mood = "normal";
     try {
@@ -635,7 +648,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
       const res = await fetch("/api/jarvis", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
-        body: JSON.stringify({ turns: turnsRef.current, ...(screen ? { screen } : {}), ...(d?.write ? { desktop: true } : {}) }),
+        body: JSON.stringify({ turns: turnsRef.current, ...(screen ? { screen } : {}), ...(d?.write ? { desktop: true } : {}), ...(openMic ? { openMic } : {}) }),
       });
       const json = await res.json().catch(() => ({}));
       for (const a of Array.isArray(json.actions) ? json.actions : []) {
