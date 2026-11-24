@@ -4,7 +4,12 @@ import { userFromRequest } from "@/lib/gmail-server";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-const MODELS = [process.env.GEMINI_MODEL || "gemini-flash-latest", "gemini-2.5-flash"];
+// Free Gemini models get saturated at times: if one is busy or slow, the next one answers.
+const MODELS = [process.env.GEMINI_MODEL || "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-lite-latest"];
+const PER_TRY_MS = 8000;
+const BUDGET_MS = 25_000;
+const PROMPT =
+  "Transcribí exactamente lo que dice la persona en este audio (español rioplatense). Respondé solo con el texto, sin comillas ni comentarios. Si no se entiende nada o no habla nadie, respondé vacío.";
 
 /**
  * Speech to text with Gemini, for places without the browser's recognizer (the desktop app).
@@ -23,26 +28,30 @@ export async function POST(req: Request) {
   if (!audio || audio.length > 2_500_000) return Response.json({ error: "bad_request" }, { status: 400 });
 
   const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
+  const start = Date.now();
+  let busy = false;
   for (const model of [...new Set(MODELS)]) {
+    const left = BUDGET_MS - (Date.now() - start);
+    if (left < 2000) break;
     try {
       const res = await ai.models.generateContent({
         model,
-        contents: [{
-          role: "user",
-          parts: [
-            { inlineData: { mimeType: "audio/wav", data: audio } },
-            { text: "Transcribí exactamente lo que dice la persona en este audio (español rioplatense). Respondé solo con el texto, sin comillas ni comentarios. Si no se entiende nada o no habla nadie, respondé vacío." },
-          ],
-        }],
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType: "audio/wav", data: audio } }, { text: PROMPT }] }],
+        config: { abortSignal: AbortSignal.timeout(Math.min(PER_TRY_MS, left)) },
       });
       const text = (res.text ?? "").trim().replace(/^["“]|["”]$/g, "");
       return Response.json({ text });
     } catch (e) {
-      if (e instanceof ApiError && e.status === 404) continue;
+      const status = e instanceof ApiError ? e.status : 0;
+      // 404: model not available; 429/5xx/timeout: busy right now. Either way, try the next one.
+      if (status === 404 || status === 429 || status >= 500 || status === 0) {
+        busy ||= status !== 404;
+        console.warn("escuchar", model, status || String(e).slice(0, 120));
+        continue;
+      }
       console.error("escuchar", e);
-      const status = e instanceof ApiError && e.status === 429 ? 429 : 502;
-      return Response.json({ error: status === 429 ? "rate_limited" : "error" }, { status });
+      return Response.json({ error: "error" }, { status: 502 });
     }
   }
-  return Response.json({ error: "no_model" }, { status: 502 });
+  return Response.json({ error: busy ? "busy" : "no_model" }, { status: 503 });
 }

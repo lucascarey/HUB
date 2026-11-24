@@ -220,7 +220,9 @@ export function useJarvis({ signedIn, onChanged }: Options) {
           headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
           body: JSON.stringify({ audio: wav }),
         });
-        said = ((await res.json().catch(() => ({}))).text ?? "").trim();
+        const json = await res.json().catch(() => ({}));
+        said = (json.text ?? "").trim();
+        if (!res.ok) setNote(json.error === "busy" ? "Gemini está saturado y no te pude entender. Probá de nuevo en un ratito." : "No te pude entender. Probá de nuevo.");
       }
     } catch (e) {
       console.error("listen", e);

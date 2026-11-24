@@ -12,7 +12,7 @@ type Turn = { role: "user" | "assistant"; text: string };
 // "gemini-flash-latest" follows Google's current Flash model, which the free tier of AI Studio includes.
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 // Tried in order when Google answers that a model does not exist.
-const FALLBACKS = ["gemini-2.5-flash", "gemini-2.0-flash"];
+const FALLBACKS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-lite-latest"];
 const MAX_STEPS = 8;
 
 const SYSTEM = `Sos Jarvis, el asistente personal de Lucas y el cerebro de su HUB. Tenés cara de robot (dos ojos al estilo Cozmo) y personalidad: curioso, cálido, con humor seco. Hablás en español rioplatense, con voseo, tono cercano y directo.
@@ -124,7 +124,8 @@ export async function POST(req: Request) {
           res = await ai.models.generateContent({ model: models[0], contents, config });
           break;
         } catch (e) {
-          if (e instanceof ApiError && e.status === 404 && models.length > 1) {
+          // Not available (404) or saturated right now (429/5xx): the next free model answers.
+          if (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status >= 500) && models.length > 1) {
             console.warn("jarvis model not found, trying next", models.shift());
             continue;
           }
