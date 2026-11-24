@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isEmotion, type Emotion } from "./cozmo";
 import { supabase } from "./supabase";
+import { startWakeWord, stopWakeWord, wakeWordKey } from "./wakeword";
 
 export type Turn = { role: "user" | "assistant"; text: string };
 export type Phase = "idle" | "listening" | "thinking" | "speaking";
@@ -122,6 +123,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
   const phaseRef = useRef<Phase>("idle");
   const turnsRef = useRef<Turn[]>([]);
   const awaitingCommand = useRef(false);
+  const wakeWordFailed = useRef(false);
   // Speech callbacks outlive renders: they call the latest ask() through this ref.
   const askRef = useRef<(q: string) => Promise<void>>(async () => {});
 
@@ -154,6 +156,22 @@ export function useJarvis({ signedIn, onChanged }: Options) {
 
   // Hands-free listening restarts itself after every phrase while the mode is on.
   const startListening = useCallback((mode: "command" | "wake") => {
+    // Hands-free with the on-device "Jarvis" detector (works with the tab in the background).
+    if (mode === "wake" && wakeWordKey && !wakeWordFailed.current) {
+      startWakeWord(() => {
+        if (!wakeRef.current || phaseRef.current !== "idle") return;
+        void stopWakeWord();
+        setEmotion("sorprendido");
+        startListening("command");
+      }).catch((e) => {
+        console.error("wake word", e);
+        wakeWordFailed.current = true;
+        setNote("No pude activar la palabra \"Jarvis\". Uso el modo simple.");
+        if (wakeRef.current) startListening("wake");
+      });
+      return;
+    }
+    if (mode === "command") void stopWakeWord();
     const SRC = getSR();
     if (!SRC) return;
     rec.current?.abort();
@@ -211,8 +229,10 @@ export function useJarvis({ signedIn, onChanged }: Options) {
         const said = finalText.trim();
         setInterim("");
         if (said) void askRef.current(said);
-        else if (phaseRef.current === "listening") setP("idle");
-        else if (wakeRef.current) startListening("wake");
+        else {
+          if (phaseRef.current === "listening") setP("idle");
+          if (wakeRef.current) startListening("wake");
+        }
         return;
       }
       // Chrome ends continuous recognition after a while; keep going while the app is in view.
@@ -233,6 +253,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     if (!question) return;
     rec.current?.abort();
     rec.current = null;
+    void stopWakeWord();
     setInterim("");
     setOpen(true);
     setNote(null);
@@ -287,11 +308,12 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     } catch {}
   };
 
-  // Hands-free mode only runs while the app is open and in view (a web app can't listen in the background).
+  // Hands-free mode. The browser recognizer only runs with the app in view; the Porcupine detector keeps listening in the background.
   useEffect(() => {
     wakeRef.current = wake && signedIn;
     if (!wakeRef.current) {
       if (rec.current?.continuous) rec.current.abort();
+      void stopWakeWord();
       return;
     }
     if (!rec.current && phaseRef.current === "idle") startListening("wake");
@@ -308,6 +330,7 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     if (phase === "speaking") {
       stopSpeaking();
       setP("idle");
+      if (wakeRef.current) startListening("wake");
       return;
     }
     if (phase === "listening") {

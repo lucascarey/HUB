@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@google/genai": "^3.6.1",
+    "@picovoice/porcupine-web": "^4.0.1",
+    "@picovoice/web-voice-processor": "^4.0.10",
     "@supabase/supabase-js": "^2.58.0",
     "next": "15.5.29",
     "react": "19.1.0",
