@@ -25,7 +25,22 @@ export interface DesktopBridge {
   setClickable(on: boolean): void;
   openHub(path?: string): void;
   hide(): void;
+  /** JPEG (base64) of the main screen without Jarvis; missing in installers before 0.1.3. */
+  screenshot?(): Promise<string | null>;
 }
+
+/** Questions about what Lucas has in front of him: those go with a screenshot in the desktop app. */
+const SCREEN_RE = new RegExp(
+  [
+    "pantalla",
+    "\\b(ves|mir[aá]|mirame|fijate|le[eé]me|le[eé]lo)\\b",
+    "\\bqu[eé] (es|dice|significa|onda con) (esto|eso|ac[aá])",
+    "\\b(este|esta|ese|esa) (error|p[aá]gina|mail|ventana|c[oó]digo|archivo|foto|imagen|tabla|gr[aá]fico|video|mensaje|programa)\\b",
+    "\\b(con|en) esto\\b",
+    "lo que (estoy|tengo) (viendo|haciendo|abierto|delante)",
+  ].join("|"),
+  "i",
+);
 export const desktop = (): DesktopBridge | null =>
   typeof window === "undefined" ? null : ((window as unknown as { jarvisDesktop?: DesktopBridge }).jarvisDesktop ?? null);
 
@@ -335,10 +350,13 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     let reply = "";
     try {
       const t = await token();
+      const d = desktop();
+      const screen = d?.screenshot && SCREEN_RE.test(question) ? await d.screenshot().catch(() => null) : null;
+      if (screen) setEmotion("concentrado");
       const res = await fetch("/api/jarvis", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
-        body: JSON.stringify({ turns: turnsRef.current }),
+        body: JSON.stringify({ turns: turnsRef.current, ...(screen ? { screen } : {}) }),
       });
       const json = await res.json().catch(() => ({}));
       if (json.text) {

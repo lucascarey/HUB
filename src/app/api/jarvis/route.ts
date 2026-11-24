@@ -39,7 +39,11 @@ Cómo trabajás:
 - "Agendá" o "poneme en el calendario" con día y hora es un evento de Google Calendar. "Anotá", "acordame de" o algo sin hora es un item del HUB (tarea, idea, etc.).
 - Antes de editar o marcar algo del HUB, buscalo para tener su id.
 - Si una herramienta devuelve un error de conexión o permisos, explicale a Lucas en una frase qué tiene que hacer.
-- Zona horaria: Argentina (${TZ}).`;
+- Zona horaria: Argentina (${TZ}).
+
+Tu vista:
+- A veces el mensaje de Lucas viene con una captura de su pantalla: es lo que tiene delante en ese momento. Usala para responder ("¿qué es esto?", "ayudame con este error"), mirando el detalle que importa y sin describir la pantalla entera.
+- Si te pregunta por algo de la pantalla y no vino captura, decile que eso lo podés ver desde la app de escritorio.`;
 
 function now() {
   const fmt = new Intl.DateTimeFormat("es-AR", {
@@ -72,7 +76,9 @@ export async function POST(req: Request) {
   const owner = process.env.HUB_OWNER_ID;
   if (owner && user.id !== owner) return Response.json({ error: "forbidden" }, { status: 403 });
 
-  const body = (await req.json().catch(() => null)) as { turns?: Turn[] } | null;
+  const body = (await req.json().catch(() => null)) as { turns?: Turn[]; screen?: string } | null;
+  // Optional JPEG screenshot (base64) from the desktop app, for questions about what's on screen.
+  const screen = typeof body?.screen === "string" && body.screen.length < 3_000_000 ? body.screen : null;
   const turns = (body?.turns ?? [])
     .filter((t) => (t.role === "user" || t.role === "assistant") && typeof t.text === "string" && t.text.trim())
     .slice(-16);
@@ -100,6 +106,7 @@ export async function POST(req: Request) {
     }],
   };
   const contents: Content[] = turns.map((t) => ({ role: t.role === "user" ? "user" : "model", parts: [{ text: t.text }] }));
+  if (screen) contents[contents.length - 1].parts!.unshift({ inlineData: { mimeType: "image/jpeg", data: screen } });
 
   try {
     for (let step = 0; step < MAX_STEPS; step++) {

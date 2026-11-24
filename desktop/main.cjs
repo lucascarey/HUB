@@ -1,6 +1,6 @@
 // Jarvis de escritorio: a transparent, always-on-top window where Jarvis's face lives,
 // starting with Windows. The face and its behaviour come from the HUB's /compa page.
-const { app, BrowserWindow, ipcMain, screen, shell, Tray, Menu, nativeImage, session } = require("electron");
+const { app, BrowserWindow, desktopCapturer, ipcMain, screen, shell, Tray, Menu, nativeImage, session } = require("electron");
 const path = require("path");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 
@@ -45,6 +45,8 @@ function createWindow() {
   });
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true);
+  // Jarvis doesn't appear in screen captures (his own and other apps').
+  win.setContentProtection(true);
   // Clicks go through to the desktop except over the head (the page switches this on hover).
   win.setIgnoreMouseEvents(true, { forward: true });
   win.once("ready-to-show", () => win.showInactive());
@@ -104,6 +106,22 @@ async function speak(text) {
   }
 }
 
+/** What Lucas has on screen right now: the main display as JPEG (base64), at most 1600 px wide. */
+async function screenshot() {
+  try {
+    const d = screen.getPrimaryDisplay();
+    const scale = Math.min(1, 1600 / d.size.width);
+    const thumbnailSize = { width: Math.round(d.size.width * scale), height: Math.round(d.size.height * scale) };
+    const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize });
+    const src = sources.find((s) => s.display_id === String(d.id)) ?? sources[0];
+    if (!src || src.thumbnail.isEmpty()) return null;
+    return src.thumbnail.toJPEG(70).toString("base64");
+  } catch (e) {
+    console.error("screenshot", e);
+    return null;
+  }
+}
+
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icon.png")).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
@@ -148,6 +166,7 @@ app.whenReady().then(() => {
   ipcMain.on("clickable", (_e, on) => win && win.setIgnoreMouseEvents(!on, { forward: true }));
   ipcMain.on("open-hub", (_e, p) => shell.openExternal(HUB + (typeof p === "string" ? p : "/")));
   ipcMain.on("hide", () => win && win.hide());
+  ipcMain.handle("screenshot", () => screenshot());
 
   createWindow();
   createTray();
