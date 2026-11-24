@@ -340,8 +340,11 @@ html.compa-root, html.compa-root body{background:transparent !important;overflow
 .compa-head{background:radial-gradient(closest-side, #0b1a22, #05080c 78%);border:1px solid color-mix(in srgb, var(--face) 30%, #1a2630);
   border-radius:16px;padding:20px 16px;cursor:pointer;box-shadow:0 10px 30px -8px rgba(0,0,0,.65), 0 0 40px -16px var(--face),
   inset 0 0 0 3px #0a1016, inset 0 0 0 4px color-mix(in srgb, var(--face) 18%, transparent);
-  transition:transform .3s ease, border-color .25s ease, box-shadow .25s ease;animation:compa-hover 5.5s ease-in-out infinite}
-@keyframes compa-hover{0%,100%{translate:0 0}50%{translate:0 -4px}}
+  transition:border-color .25s ease, box-shadow .25s ease;animation:compa-hover 5.5s ease-in-out infinite}
+@keyframes compa-hover{0%,100%{translate:0 0;rotate:-1.5deg}50%{translate:0 -4px;rotate:1.5deg}}
+/* Hitting the screen edge: a quick squash. */
+.compa-head.bonk{animation:compa-bonk .35s ease-out, compa-hover 5.5s ease-in-out infinite}
+@keyframes compa-bonk{0%{scale:1}30%{scale:.88 1.08}60%{scale:1.05 .95}100%{scale:1}}
 .compa.asleep .compa-head{animation-duration:8s}
 /* Listening: the outline lights up light blue. */
 .compa.listening .compa-head{border-color:#5ad8ff;box-shadow:0 10px 30px -8px rgba(0,0,0,.65), 0 0 0 2px #5ad8ff, 0 0 26px 2px rgba(90,216,255,.55),
@@ -351,9 +354,18 @@ html.compa-root, html.compa-root body{background:transparent !important;overflow
 .compa-head{touch-action:none}
 .compa-head:active{cursor:grabbing}
 .compa.asleep .compa-head{box-shadow:0 10px 30px -8px rgba(0,0,0,.6);filter:saturate(.7) brightness(.85)}
-.compa-bubble{margin:0;max-width:260px;background:#0b1118;color:#e9f6fb;border:1px solid color-mix(in srgb, var(--face) 35%, #1a2630);
-  border-radius:16px 16px 16px 4px;padding:8px 12px;font-size:13.5px;line-height:1.35;box-shadow:0 8px 24px -10px rgba(0,0,0,.7);
-  display:-webkit-box;-webkit-line-clamp:9;-webkit-box-orient:vertical;overflow:hidden;animation:compa-pop .25s ease}
+.compa-bubble{position:relative;margin:0 0 6px;max-width:260px;background:#f4fbff;color:#0b1118;border:2px solid #0b1118;
+  border-radius:18px;padding:8px 13px;font-size:13.5px;line-height:1.35;box-shadow:0 8px 22px -10px rgba(0,0,0,.7);
+  overflow:visible;animation:compa-pop .25s ease}
+.compa-bubble span{display:-webkit-box;-webkit-line-clamp:9;-webkit-box-orient:vertical;overflow:hidden}
+/* The tail, pointing at Cosmo (down when the balloon is above him, up when it's below). */
+.compa-bubble::before,.compa-bubble::after{content:"";position:absolute;left:50%;translate:-50% 0;border:solid transparent}
+.compa-bubble::before{bottom:-14px;border-width:14px 10px 0;border-top-color:#0b1118}
+.compa-bubble::after{bottom:-10px;border-width:11px 8px 0;border-top-color:#f4fbff}
+.compa.below{flex-direction:column-reverse;justify-content:flex-end;padding:10px 8px 8px}
+.compa.below .compa-bubble{margin:6px 0 0}
+.compa.below .compa-bubble::before{bottom:auto;top:-14px;border-width:0 10px 14px;border-bottom-color:#0b1118;border-top-color:transparent}
+.compa.below .compa-bubble::after{bottom:auto;top:-10px;border-width:0 8px 11px;border-bottom-color:#f4fbff;border-top-color:transparent}
 @keyframes compa-pop{from{opacity:0;transform:translateY(6px) scale(.96)}}
 .compa-note{margin:0;max-width:260px;text-align:center;font-size:12px;color:#ffd38a;text-shadow:0 1px 3px #000}
 .compa-form{display:flex;gap:6px;background:#0b1118;border:1px solid #1a2630;border-radius:14px;padding:6px}
