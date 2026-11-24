@@ -6,9 +6,11 @@ import { desktop, useJarvis } from "@/lib/useJarvis";
 import { supabase } from "@/lib/supabase";
 import type { Emotion } from "@/lib/cozmo";
 
-type Mood = "awake" | "asleep" | "hidden";
+type Mood = "awake" | "asleep" | "hidden" | "off";
 
 const SLEEP_AFTER = 8 * 60_000;
+/** With nothing going on for this long he switches off like an old TV, and comes back when called. */
+const OFF_AFTER = 10_000;
 const REMIND_BEFORE = 15 * 60_000;
 const SEEN_KEY = "jarvis-reminded";
 const GREET_KEY = "jarvis-greeted";
@@ -165,8 +167,15 @@ function Alive() {
     setMood(m);
   }, []);
 
+  const [tvOn, setTvOn] = useState(false);
   const wakeUp = useCallback(() => {
     lastActive.current = Date.now();
+    if (moodRef.current === "off") {
+      setM("awake");
+      setTvOn(true);
+      setTimeout(() => setTvOn(false), 600);
+      return;
+    }
     if (moodRef.current !== "awake") {
       setM("awake");
       spot("show");
@@ -199,6 +208,21 @@ function Alive() {
       return () => clearTimeout(t);
     }
   }, [jarvis.interim, phase, jarvis.lastReply]);
+
+  // Nothing to say, nobody touching him: after a few seconds he switches off (TV-off effect).
+  const quietSince = useRef(Date.now());
+  const busy = phase !== "idle" || !!bubble || !!jarvis.note || mood !== "awake";
+  useEffect(() => {
+    quietSince.current = Date.now();
+  }, [busy]);
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (busy || drag.current) return;
+      if (hovered.current) return void (quietSince.current = Date.now());
+      if (Date.now() - quietSince.current > OFF_AFTER) setM("off");
+    }, 1000);
+    return () => clearInterval(t);
+  }, [busy, setM]);
 
   // A life of his own: wander, glance, peek, yawn; sleep when nobody talks to him.
   useEffect(() => {
@@ -288,7 +312,7 @@ function Alive() {
   const shown: Emotion = mood === "asleep" ? "dormido" : flash ?? jarvis.emotion;
 
   return (
-    <div className={`compa ${mood}${phase === "listening" ? " listening" : ""}${below ? " below" : ""}`}>
+    <div className={`compa ${mood}${tvOn ? " tvon" : ""}${phase === "listening" ? " listening" : ""}${below ? " below" : ""}`}>
       {bubble && mood === "awake" && <p className="compa-bubble"><span>{bubble}</span></p>}
       <button
         type="button"

@@ -5,10 +5,15 @@ import { now, schemaFor, SYSTEM } from "@/lib/jarvis-brain";
 import { desktopTools, jarvisTools, memoryDigest, type Changed, type DesktopAction } from "@/lib/jarvis-tools";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 type Turn = { role: "user" | "assistant"; text: string };
 
+// Cosmo thinks with Gemini Pro (smarter, more personality). Its free quota is small, so when Google says
+// it's used up he answers with Flash for a while instead of failing.
+const PRO = ["gemini-pro-latest", "gemini-2.5-pro"];
+const PRO_REST_MS = 10 * 60_000;
+let proTiredAt = 0;
 // "gemini-flash-latest" follows Google's current Flash model, which the free tier of AI Studio includes.
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 // Tried in order when Google answers that a model does not exist.
@@ -52,7 +57,8 @@ export async function POST(req: Request) {
   const byName = new Map(tools.map((t) => [t.name, t]));
   // v1beta: the "-latest" aliases and function calling live there (the SDK defaults to v1).
   const ai = new GoogleGenAI({ apiKey: key, apiVersion: "v1beta" });
-  const models = [...new Set([MODEL, ...FALLBACKS])];
+  const proOk = Date.now() - proTiredAt > PRO_REST_MS;
+  const models = [...new Set([...(proOk ? PRO : []), MODEL, ...FALLBACKS])];
   const config = {
     systemInstruction: `${SYSTEM}\n\nLo que recordás de Lucas:\n${memory}\n\n${now()}`,
     tools: [{
@@ -75,8 +81,10 @@ export async function POST(req: Request) {
           break;
         } catch (e) {
           // Not available (404) or saturated right now (429/5xx): the next free model answers.
-          if (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status >= 500) && models.length > 1) {
-            console.warn("jarvis model not found, trying next", models.shift());
+          if (e instanceof ApiError && (e.status === 404 || e.status === 429 || e.status === 403 || e.status >= 500) && models.length > 1) {
+            const failed = models.shift()!;
+            if (PRO.includes(failed) && e.status === 429) proTiredAt = Date.now();
+            console.warn("jarvis model unavailable, trying next", failed, e.status);
             continue;
           }
           throw e;
@@ -85,7 +93,7 @@ export async function POST(req: Request) {
       const calls = res.functionCalls ?? [];
       if (!calls.length) {
         const { text, emotion } = splitEmotion(res.text ?? "");
-        return Response.json({ text: text || "Listo.", emotion, changed, actions });
+        return Response.json({ text: text || "Listo.", emotion, changed, actions, model: models[0] });
       }
       // Keep the model's turn exactly as returned (it carries thought signatures Gemini needs back).
       const modelTurn = res.candidates?.[0]?.content;

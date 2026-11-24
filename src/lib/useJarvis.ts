@@ -8,6 +8,9 @@ import { startWakeWord, stopWakeWord } from "./wakeword";
 import { LiveChat } from "./live";
 import { chirp, hush as hushChirps, moodFor } from "./droid";
 
+/** Goodbyes that end a live chat once he's answered. */
+const BYE_RE = /\b(chau|chao|adi[oó]s|nos vemos|hasta luego|eso es todo)\b/i;
+
 export type Turn = { role: "user" | "assistant"; text: string };
 export type Phase = "idle" | "listening" | "thinking" | "speaking";
 
@@ -328,10 +331,33 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     setOpen(true);
     setNote(null);
     liveTurn.current = { user: -1, assistant: -1 };
+    // Ears mode: Live only hears him; each phrase is answered by Gemini Pro (smarter, more himself).
+    let queue = Promise.resolve();
+    const reply = async (text: string) => {
+      if (live.current !== chat) return;
+      liveText("user", text, true);
+      chat.hold(true);
+      setP("thinking");
+      setEmotion("concentrado");
+      const { reply: said, mood } = await answer(text);
+      if (live.current !== chat) return void chat.hold(false);
+      push({ role: "assistant", text: said });
+      setEmotion(mood as Emotion);
+      setP("speaking");
+      const secs = chirp(said, moodFor(mood, said));
+      await new Promise((r) => setTimeout(r, Math.max(900, secs * 1000 + 200)));
+      chat.hold(false);
+      if (live.current !== chat) return;
+      if (BYE_RE.test(text)) return chat.stop("bye");
+      setP("listening");
+    };
     const chat = new LiveChat({
       bearer,
       desktop: true,
       droid: true,
+      ears: (text) => {
+        queue = queue.then(() => reply(text)).catch((e) => console.error("live reply", e));
+      },
       onState: (s) => {
         if (live.current !== chat) return;
         setP(s === "connecting" ? "thinking" : s);
@@ -570,17 +596,8 @@ export function useJarvis({ signedIn, onChanged }: Options) {
     });
   };
 
-  const ask = async (q: string) => {
-    const question = q.trim();
-    if (!question) return;
-    rec.current?.abort();
-    rec.current = null;
-    void stopWakeWord();
-    setInterim("");
-    setOpen(true);
-    setNote(null);
-    push({ role: "user", text: question });
-    setP("thinking");
+  /** Cosmo's answer to the conversation so far (the last turn is Lucas's question), from Gemini Pro on the server. */
+  const answer = async (question: string) => {
     let reply = "";
     let mood = "normal";
     try {
@@ -612,12 +629,29 @@ export function useJarvis({ signedIn, onChanged }: Options) {
           : json.error === "bad_key" ? "La clave de Gemini no funciona. Revisala en Vercel."
           : json.error === "rate_limited" ? "Llegué al límite gratis de Gemini por ahora. Probá en un rato."
           : "Algo falló. Probá de nuevo.";
+        mood = "triste";
         setEmotion("triste");
       }
     } catch {
       reply = "No tengo conexión ahora.";
-      setEmotion("triste");
+      mood = "triste";
+        setEmotion("triste");
     }
+    return { reply, mood };
+  };
+
+  const ask = async (q: string) => {
+    const question = q.trim();
+    if (!question) return;
+    rec.current?.abort();
+    rec.current = null;
+    void stopWakeWord();
+    setInterim("");
+    setOpen(true);
+    setNote(null);
+    push({ role: "user", text: question });
+    setP("thinking");
+    const { reply, mood } = await answer(question);
     push({ role: "assistant", text: reply });
     const resume = () => {
       setP("idle");

@@ -36,6 +36,11 @@ export interface LiveHooks {
   desktop: boolean;
   /** Droid mode: beeps instead of his voice (the words show in the bubble from the transcript). */
   droid?: boolean;
+  /**
+   * Ears mode: Gemini Live only listens and transcribes. Each thing Lucas says is handed over here,
+   * and the app answers it with the smarter model (its own throwaway reply is ignored).
+   */
+  ears?: (text: string) => void;
   onState(s: LiveState): void;
   /** Running transcript: what Lucas said and what Cosmo said (each turn as it grows). */
   onTurn(role: "user" | "assistant", text: string, done: boolean): void;
@@ -102,7 +107,7 @@ export class LiveChat {
       const res: Response | null = await fetch("/api/live", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${this.hooks.bearer}` },
-        body: JSON.stringify({ model, desktop: this.hooks.desktop }),
+        body: JSON.stringify({ model, desktop: this.hooks.desktop, ears: !!this.hooks.ears }),
       }).catch(() => null);
       const json: { token?: string; model?: string; next?: number | null; error?: string } = res ? await res.json().catch(() => ({})) : {};
       if (json.token && json.model && (await this.connect(json.token, json.model))) break;
@@ -260,7 +265,31 @@ export class LiveChat {
     this.playAt = 0;
   }
 
+  /** Keeps the chat open while the app works on an answer (ears mode). */
+  hold(on: boolean) {
+    this.toolsBusy = Math.max(0, this.toolsBusy + (on ? 1 : -1));
+    this.lastActivity = Date.now();
+  }
+
+  /** Ears mode: collect what Lucas says; once Gemini takes its turn, hand his words to the app. */
+  private onEars(m: LiveServerMessage) {
+    const sc = m.serverContent;
+    if (!sc) return;
+    if (sc.inputTranscription?.text) {
+      this.lastActivity = Date.now();
+      this.userText += sc.inputTranscription.text;
+      this.hooks.onTurn("user", this.userText.trim(), false);
+    }
+    if (sc.turnComplete && this.userText.trim()) {
+      const text = this.userText.trim();
+      this.userText = "";
+      this.lastActivity = Date.now();
+      this.hooks.ears?.(text);
+    }
+  }
+
   private async onMessage(m: LiveServerMessage) {
+    if (this.hooks.ears) return this.onEars(m);
     const sc = m.serverContent;
     if (sc) {
       if (sc.interrupted) {

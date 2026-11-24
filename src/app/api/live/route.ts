@@ -16,6 +16,8 @@ const LIVE_ONLY = [
   { name: "terminar_charla", description: "Termina la charla de voz cuando Lucas se despide o dice que es todo.", inputSchema: z.object({}) },
 ];
 
+const EARS = "Sos solo un oído: otra inteligencia responde. Lucas habla en español rioplatense. A todo lo que diga respondé únicamente \"mm\", sin nada más.";
+
 /**
  * A short-lived token for one live voice chat with Cosmo, with his personality, memory and tools locked in,
  * so the app talks to Gemini directly (low latency) without ever seeing the API key.
@@ -29,15 +31,17 @@ export async function POST(req: Request) {
   const owner = process.env.HUB_OWNER_ID;
   if (owner && user.id !== owner) return Response.json({ error: "forbidden" }, { status: 403 });
 
-  const body = (await req.json().catch(() => null)) as { model?: number; desktop?: boolean } | null;
+  const body = (await req.json().catch(() => null)) as { model?: number; desktop?: boolean; ears?: boolean } | null;
+  // Ears mode: the live model only listens and transcribes; the app answers with Gemini Pro.
+  const ears = !!body?.ears;
   const models = [...new Set(LIVE_MODELS)];
   const idx = Math.max(0, Math.min(models.length - 1, Number(body?.model) || 0));
   const model = models[idx];
 
   const sb = supabaseAs(user.token);
   const changed: Changed = { hub: false, calendar: false, memory: false };
-  const tools = [...jarvisTools(sb, changed), ...(body?.desktop ? [...desktopTools([]), ...LIVE_ONLY] : LIVE_ONLY.slice(1))];
-  const memory = await memoryDigest(sb);
+  const tools = ears ? [] : [...jarvisTools(sb, changed), ...(body?.desktop ? [...desktopTools([]), ...LIVE_ONLY] : LIVE_ONLY.slice(1))];
+  const memory = ears ? "" : await memoryDigest(sb);
 
   try {
     const ai = new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: "v1beta" } });
@@ -50,7 +54,7 @@ export async function POST(req: Request) {
           model,
           config: {
             responseModalities: [Modality.AUDIO],
-            systemInstruction: liveSystem(memory),
+            systemInstruction: ears ? EARS : liveSystem(memory),
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } },
             inputAudioTranscription: {},
             // Lucas can pause to think mid-sentence without being cut off.
@@ -58,9 +62,11 @@ export async function POST(req: Request) {
               automaticActivityDetection: { endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW, silenceDurationMs: 900, prefixPaddingMs: 300 },
             },
             outputAudioTranscription: {},
-            tools: [{
-              functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: schemaFor(t.inputSchema) })),
-            }],
+            ...(tools.length ? {
+              tools: [{
+                functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: schemaFor(t.inputSchema) })),
+              }],
+            } : {}),
           },
         },
       },
